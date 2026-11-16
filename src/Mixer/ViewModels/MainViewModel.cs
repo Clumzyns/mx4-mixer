@@ -34,6 +34,8 @@ public sealed class MainViewModel : ObservableObject
     private double _masterVolume = 100;
     private bool _invertVolumeKnob;
     private bool _customDisplay;
+    private int _mixLatencyMs = 20;
+    private bool _gameStraightThrough;
     private int _lastKnobPosition = -1;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
@@ -60,6 +62,8 @@ public sealed class MainViewModel : ObservableObject
         _masterVolume = ChatMixMath.Percent(config.MasterVolume);
         _invertVolumeKnob = config.InvertVolumeKnob;
         _customDisplay = config.CustomDisplay;
+        _mixLatencyMs = config.MixLatencyMs is 10 or 40 ? config.MixLatencyMs : 20;
+        _gameStraightThrough = config.GameStraightThrough;
         _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
         _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
         Channels = new ObservableCollection<ChannelViewModel>(
@@ -227,6 +231,35 @@ public sealed class MainViewModel : ObservableObject
             if (!Set(ref _customDisplay, value)) return;
             _config.CustomDisplay = value;
             _display.Enabled = value;
+            ConfigStore.SaveSoon(_config);
+        }
+    }
+
+    public int[] LatencyChoices { get; } = [10, 20, 40];
+
+    public int MixLatencyMs
+    {
+        get => _mixLatencyMs;
+        set
+        {
+            var ms = value is 10 or 40 ? value : 20;
+            if (_mixLatencyMs == ms) return;
+            _mixLatencyMs = ms;
+            Raise(nameof(MixLatencyMs));
+            _config.MixLatencyMs = ms;
+            _engine.SetMixLatency(ms);
+            ConfigStore.SaveSoon(_config);
+        }
+    }
+
+    public bool GameStraightThrough
+    {
+        get => _gameStraightThrough;
+        set
+        {
+            if (!Set(ref _gameStraightThrough, value)) return;
+            _config.GameStraightThrough = value;
+            _engine.SetGameStraightThrough(value);
             ConfigStore.SaveSoon(_config);
         }
     }

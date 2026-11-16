@@ -364,6 +364,20 @@ public sealed class AudioEngine : IDisposable
         });
     }
 
+    public void SetMixLatency(int milliseconds) => Post(() =>
+    {
+        _config.MixLatencyMs = milliseconds is 10 or 40 ? milliseconds : 20;
+        ScheduleSave();
+        RequestScanSoon(immediate: true);
+    });
+
+    public void SetGameStraightThrough(bool enabled) => Post(() =>
+    {
+        _config.GameStraightThrough = enabled;
+        ScheduleSave();
+        RequestScanSoon(immediate: true);
+    });
+
     public void SetCable(ChannelId channel, string renderId)
     {
         if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)) return;
@@ -1283,9 +1297,11 @@ public sealed class AudioEngine : IDisposable
     {
         var masterIsVirtual = _masterOutputId != null && _virtualInputs.Values.Any(id => SameDevice(id, _masterOutputId));
         var canMix = _virtualCaptures.Count > 0 && _masterOutputId != null && !masterIsVirtual && _render.ContainsKey(_masterOutputId);
+        var latency = _config.MixLatencyMs is 10 or 40 ? _config.MixLatencyMs : 20;
         var signature = canMix
             ? _masterOutputId + "|" + string.Join(",", _virtualCaptures.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value))
               + "|" + string.Join(",", ChannelIds.All.Select(id => id + ":" + (_config.Channel(id).DeviceId ?? "")))
+              + "|lat=" + latency + "|bypass=" + (_config.GameStraightThrough ? 1 : 0)
             : "";
         _virtualMixActive = canMix;
         if (signature == _mixSignature) return;

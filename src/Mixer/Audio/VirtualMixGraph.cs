@@ -7,29 +7,34 @@ using NAudio.Wave;
 namespace Mixer.Audio;
 
 /// <summary>
-/// Loopback-captures each virtual channel in that device's mix format and renders the mix
-/// in the master device's mix format. Event-driven WASAPI, about 10 ms periods.
-/// Capture queues are trimmed to two periods so delay cannot build up.
+/// Captures each VAC line and renders the mix on the master device.
+/// Every stream is opened as 32-bit float in shared mode so Windows converts
+/// 16-bit cable audio and 24-bit DAC audio. The render thread waits on the WASAPI event.
 /// </summary>
-internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
+internal sealed class VirtualMixGraph : IDisposable
 {
-    private const int PeriodMs = 10;
+    private static readonly Guid PcmSubformat = new("00000001-0000-0010-8000-00aa00389b71");
+    private static readonly Guid FloatSubformat = new("00000003-0000-0010-8000-00aa00389b71");
+
     private readonly Dictionary<ChannelId, ChannelTap> _taps = new();
-    private readonly List<WasapiOut> _ownedOutputs = new();
+    private readonly List<WasapiPump> _pumps = new();
     private readonly LiveMix _live;
+    private readonly int _periodMs;
+    private readonly bool _bypass;
     private ChannelTap[] _masterTaps = [];
     private float[] _mixLeft = new float[2048];
     private float[] _mixRight = new float[2048];
+    private float _rampMaster = 1f;
+    private int _clips;
     private long _lastDriftLog;
     private bool _disposed;
 
-    private VirtualMixGraph(WaveFormat outputFormat, LiveMix live)
+    private VirtualMixGraph(LiveMix live, int periodMs, bool bypass)
     {
-        WaveFormat = outputFormat;
         _live = live;
+        _periodMs = periodMs;
+        _bypass = bypass;
     }
-
-    public WaveFormat WaveFormat { get; }
 
     public static VirtualMixGraph? TryStart(
         MMDevice master,
@@ -39,8 +44,8 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         IReadOnlyDictionary<string, MMDevice> outputs,
         LiveMix live)
     {
-        var outputFormat = PlaybackFormat(master);
-        var graph = new VirtualMixGraph(outputFormat, live);
+        var period = config.MixLatencyMs is 10 or 40 ? config.MixLatencyMs : 20;
+        var graph = new VirtualMixGraph(live, period, config.GameStraightThrough);
         try
         {
             foreach (var (channel, source) in captures)
@@ -49,63 +54,38 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                     continue;
                 try
                 {
-                    graph._taps[channel] = graph.StartTap(channel, source, live, false, null, outputFormat);
+                    var opened = graph.OpenClient(source, capture: true, $"{channel} capture");
+                    var tap = new ChannelTap(channel, live, opened.SampleRate, period);
+                    graph._taps[channel] = tap;
+                    var pump = graph.StartCapture(channel, opened, tap);
+                    graph._pumps.Add(pump);
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"Mix capture {channel} not started", ex);
+                    Log.Error($"Mix capture {channel} not started hr=0x{ex.HResult:X8}", ex);
                 }
             }
 
-            graph._masterTaps = graph._taps.Values.Where(tap => !tap.Separate).ToArray();
-            if (graph._masterTaps.Length > 0)
+            graph._masterTaps = graph._taps.Values.ToArray();
+            if (graph._masterTaps.Length == 0)
             {
-                var output = new WasapiOut(master, AudioClientShareMode.Shared, true, PeriodMs);
-                output.Init(graph);
-                output.Play();
-                graph._ownedOutputs.Add(output);
-                Log.Info($"Mix render {outputFormat.Encoding} {outputFormat.SampleRate}Hz {outputFormat.BitsPerSample}-bit {outputFormat.Channels}ch, event {PeriodMs}ms.");
+                graph.Dispose();
+                return null;
             }
 
+            var render = graph.OpenClient(master, capture: false, "render");
+            graph._pumps.Add(graph.StartRender(render));
+            Log.Info(config.GameStraightThrough
+                ? $"Mix bypasses to Game only, period {period}ms."
+                : $"Mixing VAC lines to {master.ID}, period {period}ms.");
             return graph;
         }
         catch (Exception ex)
         {
-            Log.Error("Virtual mix failed to start", ex);
+            Log.Error($"Virtual mix failed to start hr=0x{ex.HResult:X8}", ex);
             graph.Dispose();
             return null;
         }
-    }
-
-    public int Read(byte[] buffer, int offset, int count)
-    {
-        MmThread.EnterProAudio();
-        var channels = Math.Max(1, WaveFormat.Channels);
-        var bytesPerFrame = WaveFormat.BlockAlign > 0 ? WaveFormat.BlockAlign : channels * WaveFormat.BitsPerSample / 8;
-        if (bytesPerFrame <= 0) return 0;
-        var frames = count / bytesPerFrame;
-        if (frames <= 0) return 0;
-        if (_mixLeft.Length < frames) _mixLeft = new float[frames];
-        if (_mixRight.Length < frames) _mixRight = new float[frames];
-        Array.Clear(_mixLeft, 0, frames);
-        Array.Clear(_mixRight, 0, frames);
-        var master = _live.Master;
-        var taps = _masterTaps;
-        for (var t = 0; t < taps.Length; t++)
-        {
-            var gain = taps[t].Gain;
-            if (gain <= 0f) continue;
-            taps[t].MixInto(_mixLeft, _mixRight, frames, gain);
-        }
-
-        for (var i = 0; i < frames; i++)
-        {
-            var left = Math.Clamp(_mixLeft[i] * master, -1f, 1f);
-            var right = Math.Clamp(_mixRight[i] * master, -1f, 1f);
-            Encode(WaveFormat, buffer, offset + i * bytesPerFrame, channels, left, right);
-        }
-
-        return count;
     }
 
     public void LogDrift()
@@ -113,10 +93,24 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         var now = Environment.TickCount64;
         if (now - _lastDriftLog < 10000) return;
         _lastDriftLog = now;
+        var clips = Interlocked.Exchange(ref _clips, 0);
+        var renderFail = 0;
+        var renderShort = 0;
+        foreach (var pump in _pumps)
+        {
+            if (pump.Capture) continue;
+            renderFail += pump.TakeFailures();
+            renderShort += pump.TakeShort();
+        }
+        Log.Info($"Mix health clips={clips} renderFail={renderFail} renderShort={renderShort} bypass={_bypass} period={_periodMs}ms");
         foreach (var (channel, tap) in _taps)
         {
             var (underrun, insert, overrun, buffered) = tap.TakeDrift();
-            Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered}");
+            var pump = _pumps.FirstOrDefault(item => item.Channel == channel);
+            var disc = pump?.TakeDiscontinuity() ?? 0;
+            var silent = pump?.TakeSilent() ?? 0;
+            var fail = pump?.TakeFailures() ?? 0;
+            Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered} discontinuity={disc} silent={silent} captureFail={fail}");
         }
     }
 
@@ -134,134 +128,401 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
     {
         if (_disposed) return;
         _disposed = true;
-        foreach (var tap in _taps.Values)
-            tap.Dispose();
-        foreach (var output in _ownedOutputs)
-        {
-            try { output.Stop(); } catch { /* already stopped */ }
-            try { output.Dispose(); } catch { /* already stopped */ }
-        }
+        foreach (var pump in _pumps)
+            pump.Dispose();
+        _pumps.Clear();
         _taps.Clear();
     }
 
-    private ChannelTap StartTap(ChannelId channel, MMDevice source, LiveMix live, bool separate, MMDevice? ownOutput, WaveFormat destFormat)
+    private OpenedClient OpenClient(MMDevice device, bool capture, string label)
     {
-        var tap = new ChannelTap(channel, live, separate, destFormat.SampleRate);
-        var capture = new WasapiCapture(source, true, PeriodMs)
+        var client = device.AudioClient;
+        var mix = client.MixFormat;
+        Log.Info($"Mix {label} device format {Describe(mix)} endpoint={device.ID}");
+        var channels = Math.Max(1, mix.Channels);
+        var wanted = WaveFormat.CreateIeeeFloatWaveFormat(mix.SampleRate, channels);
+        var flags = AudioClientStreamFlags.EventCallback
+            | AudioClientStreamFlags.AutoConvertPcm
+            | AudioClientStreamFlags.SrcDefaultQuality;
+        var hns = _periodMs * 10_000L;
+        WaveFormat stream = wanted;
+        try
         {
-            ShareMode = AudioClientShareMode.Shared
-        };
-        capture.DataAvailable += (_, args) => tap.Write(args.Buffer, args.BytesRecorded, capture.WaveFormat);
-        capture.StartRecording();
-        tap.Capture = capture;
-        Log.Info($"Mix capture {channel} started endpoint={source.ID} {capture.WaveFormat.SampleRate}Hz -> {destFormat.SampleRate}Hz event {PeriodMs}ms.");
-
-        if (separate && ownOutput != null)
+            client.Initialize(AudioClientShareMode.Shared, flags, hns, 0, wanted, Guid.Empty);
+            Log.Info($"Mix {label} stream IEEE float {wanted.SampleRate}Hz {wanted.Channels}ch AUTOCONVERTPCM|SRC_DEFAULT_QUALITY period={_periodMs}ms buffer={client.BufferSize}");
+        }
+        catch (Exception ex)
         {
-            var output = new WasapiOut(ownOutput, AudioClientShareMode.Shared, true, PeriodMs);
-            output.Init(new TapOutput(tap, destFormat));
-            output.Play();
-            _ownedOutputs.Add(output);
+            Log.Error($"Mix {label} float init failed hr=0x{ex.HResult:X8}. Opening the device mix format instead.", ex);
+            try { client.Dispose(); } catch { /* failed init */ }
+            client = device.AudioClient;
+            stream = mix;
+            client.Initialize(AudioClientShareMode.Shared, flags, hns, 0, stream, Guid.Empty);
+            Log.Info($"Mix {label} stream fallback {Describe(stream)} buffer={client.BufferSize}");
         }
 
-        return tap;
+        var wait = new EventWaitHandle(false, EventResetMode.AutoReset);
+        client.SetEventHandle(wait.SafeWaitHandle.DangerousGetHandle());
+        return new OpenedClient(client, wait, stream, mix.SampleRate, channels);
     }
 
-    private static WaveFormat PlaybackFormat(MMDevice device)
+    private WasapiPump StartCapture(ChannelId channel, OpenedClient opened, ChannelTap tap)
     {
-        var mix = device.AudioClient.MixFormat;
-        if (mix.Encoding == WaveFormatEncoding.IeeeFloat && mix.BitsPerSample == 32)
-            return mix;
-        if (mix.Encoding == WaveFormatEncoding.Pcm && mix.BitsPerSample == 16)
-            return mix;
-        return WaveFormat.CreateIeeeFloatWaveFormat(mix.SampleRate, Math.Max(1, mix.Channels));
-    }
-
-    private static void Encode(WaveFormat format, byte[] buffer, int offset, int channels, float left, float right)
-    {
-        for (var channel = 0; channel < channels; channel++)
+        var pump = new WasapiPump(channel, opened, capture: true);
+        var capture = opened.Client.AudioCaptureClient;
+        opened.Client.Start();
+        pump.Thread = new Thread(() => CaptureLoop(pump, opened, capture, tap))
         {
-            var sample = channel == 0 ? left : channel == 1 ? right : 0f;
-            if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
+            IsBackground = true,
+            Name = "Mixer.Capture." + channel
+        };
+        pump.Thread.Start();
+        return pump;
+    }
+
+    private WasapiPump StartRender(OpenedClient opened)
+    {
+        var pump = new WasapiPump(null, opened, capture: false);
+        var render = opened.Client.AudioRenderClient;
+        opened.Client.Start();
+        pump.Thread = new Thread(() => RenderLoop(pump, opened, render))
+        {
+            IsBackground = true,
+            Name = "Mixer.Render"
+        };
+        pump.Thread.Start();
+        return pump;
+    }
+
+    private void CaptureLoop(WasapiPump pump, OpenedClient opened, AudioCaptureClient capture, ChannelTap tap)
+    {
+        var format = opened.Client.MixFormat;
+        // The stream format is what GetBuffer returns. Re-read from the client we initialized.
+        format = opened.Stream;
+        while (!pump.Stop)
+        {
+            if (!opened.Wait.WaitOne(Math.Max(50, _periodMs * 4)))
+                continue;
+            if (pump.Stop) break;
+            try
             {
-                var bits = BitConverter.SingleToInt32Bits(sample);
-                buffer[offset] = (byte)bits;
-                buffer[offset + 1] = (byte)(bits >> 8);
-                buffer[offset + 2] = (byte)(bits >> 16);
-                buffer[offset + 3] = (byte)(bits >> 24);
-                offset += 4;
+                while (capture.GetNextPacketSize() > 0)
+                {
+                    var data = capture.GetBuffer(out var frames, out var flags, out _, out _);
+                    if ((flags & AudioClientBufferFlags.DataDiscontinuity) != 0)
+                        Interlocked.Increment(ref pump.Discontinuity);
+                    var silent = (flags & AudioClientBufferFlags.Silent) != 0;
+                    if (silent) Interlocked.Increment(ref pump.Silent);
+                    if (frames > 0)
+                    {
+                        if (silent)
+                            tap.WriteSilence(frames);
+                        else
+                            tap.WritePacket(data, frames, format);
+                    }
+                    capture.ReleaseBuffer(frames);
+                }
+            }
+            catch (Exception ex)
+            {
+                var count = Interlocked.Increment(ref pump.Failures);
+                if (count <= 3)
+                    Log.Error($"Mix capture {pump.Channel} GetBuffer failed hr=0x{ex.HResult:X8}", ex);
+            }
+        }
+    }
+
+    private void RenderLoop(WasapiPump pump, OpenedClient opened, AudioRenderClient render)
+    {
+        MmThread.EnterProAudio();
+        var channels = opened.Channels;
+        var format = opened.Stream;
+        while (!pump.Stop)
+        {
+            if (!opened.Wait.WaitOne())
+                continue;
+            if (pump.Stop) break;
+            try
+            {
+                var padding = opened.Client.CurrentPadding;
+                var frames = opened.Client.BufferSize - padding;
+                if (frames <= 0)
+                {
+                    Interlocked.Increment(ref pump.Short);
+                    continue;
+                }
+
+                var data = render.GetBuffer(frames);
+                if (IsFloat(format))
+                {
+                    var samples = frames * channels;
+                    if (pump.Scratch.Length < samples) pump.Scratch = new float[samples];
+                    RenderMix(pump.Scratch, frames, channels, format);
+                    Marshal.Copy(pump.Scratch, 0, data, samples);
+                }
+                else
+                {
+                    RenderMix(null, frames, channels, format);
+                    if (pump.Bytes.Length < frames * format.BlockAlign) pump.Bytes = new byte[frames * format.BlockAlign];
+                    EncodePcm(pump.Bytes, frames, format);
+                    Marshal.Copy(pump.Bytes, 0, data, frames * format.BlockAlign);
+                }
+                render.ReleaseBuffer(frames, AudioClientBufferFlags.None);
+            }
+            catch (Exception ex)
+            {
+                var count = Interlocked.Increment(ref pump.Failures);
+                if (count <= 3)
+                    Log.Error($"Mix render GetBuffer/ReleaseBuffer failed hr=0x{ex.HResult:X8}", ex);
+            }
+        }
+    }
+
+    private void RenderMix(float[]? dest, int frames, int channels, WaveFormat format)
+    {
+        if (_mixLeft.Length < frames) _mixLeft = new float[frames];
+        if (_mixRight.Length < frames) _mixRight = new float[frames];
+        Array.Clear(_mixLeft, 0, frames);
+        Array.Clear(_mixRight, 0, frames);
+
+        if (_bypass)
+        {
+            var game = _masterTaps.FirstOrDefault(tap => tap.Channel == ChannelId.Game);
+            game?.MixInto(_mixLeft, _mixRight, frames, 1f, 1f);
+            _rampMaster = 1f;
+            WriteOutput(dest, frames, channels, format, limit: false, masterStart: 1f, masterEnd: 1f);
+            return;
+        }
+
+        var masterEnd = _live.Master;
+        var masterStart = _rampMaster;
+        foreach (var tap in _masterTaps)
+        {
+            var end = tap.Gain;
+            tap.MixInto(_mixLeft, _mixRight, frames, tap.Ramp, end);
+            tap.Ramp = end;
+        }
+        WriteOutput(dest, frames, channels, format, limit: true, masterStart, masterEnd);
+        _rampMaster = masterEnd;
+    }
+
+    private void WriteOutput(float[]? dest, int frames, int channels, WaveFormat format, bool limit, float masterStart, float masterEnd)
+    {
+        var clips = 0;
+        for (var i = 0; i < frames; i++)
+        {
+            var master = frames == 1 ? masterEnd : masterStart + (masterEnd - masterStart) * ((i + 1f) / frames);
+            var left = _mixLeft[i] * master;
+            var right = _mixRight[i] * master;
+            if (limit)
+            {
+                left = SoftLimit(left, ref clips);
+                right = SoftLimit(right, ref clips);
+            }
+            if (dest == null)
+            {
+                _mixLeft[i] = left;
+                _mixRight[i] = right;
             }
             else
             {
-                var pcm = (short)Math.Clamp(Math.Round(sample * 32767f), short.MinValue, short.MaxValue);
-                buffer[offset] = (byte)pcm;
-                buffer[offset + 1] = (byte)(pcm >> 8);
-                offset += 2;
+                Pack(dest, i, channels, left, right);
             }
         }
+        if (clips > 0) Interlocked.Add(ref _clips, clips);
     }
 
-    private sealed class TapOutput : IWaveProvider
+    private static float SoftLimit(float sample, ref int clips)
     {
-        private readonly ChannelTap _tap;
-        public TapOutput(ChannelTap tap, WaveFormat format)
+        var abs = Math.Abs(sample);
+        if (abs <= 0.9f) return sample;
+        if (abs > 1f) clips++;
+        var sign = Math.Sign(sample);
+        var over = abs - 0.9f;
+        return sign * (0.9f + 0.1f * over / (1f + over));
+    }
+
+    private static void Pack(float[] dest, int frame, int channels, float left, float right)
+    {
+        var at = frame * channels;
+        dest[at] = left;
+        if (channels > 1) dest[at + 1] = right;
+        for (var c = 2; c < channels; c++) dest[at + c] = 0f;
+    }
+
+    private void EncodePcm(byte[] dest, int frames, WaveFormat format)
+    {
+        var channels = Math.Max(1, format.Channels);
+        for (var frame = 0; frame < frames; frame++)
         {
-            _tap = tap;
-            WaveFormat = format;
-        }
-
-        public WaveFormat WaveFormat { get; }
-
-        public int Read(byte[] buffer, int offset, int count)
-        {
-            var channels = Math.Max(1, WaveFormat.Channels);
-            var bytesPerFrame = WaveFormat.BlockAlign > 0 ? WaveFormat.BlockAlign : channels * WaveFormat.BitsPerSample / 8;
-            if (bytesPerFrame <= 0) return 0;
-            var frames = count / bytesPerFrame;
-            var gain = _tap.Gain;
-            var lefts = new float[Math.Max(1, frames)];
-            var rights = new float[Math.Max(1, frames)];
-            if (gain > 0f)
-                _tap.MixInto(lefts, rights, frames, gain);
-            for (var i = 0; i < frames; i++)
-                Encode(WaveFormat, buffer, offset + i * bytesPerFrame, channels, Math.Clamp(lefts[i], -1f, 1f), Math.Clamp(rights[i], -1f, 1f));
-
-            var written = frames * bytesPerFrame;
-            if (written < count) Array.Clear(buffer, offset + written, count - written);
-            return count;
+            WritePcm(dest, frame, 0, channels, format, _mixLeft[frame]);
+            if (channels > 1) WritePcm(dest, frame, 1, channels, format, _mixRight[frame]);
         }
     }
 
-    private sealed class ChannelTap : IDisposable
+    private static void WritePcm(byte[] dest, int frame, int channel, int channels, WaveFormat format, float sample)
+    {
+        var sampleBytes = format.BitsPerSample == 24 ? 3 : format.BitsPerSample == 32 ? 4 : 2;
+        var offset = frame * format.BlockAlign + channel * sampleBytes;
+        if (offset < 0 || offset + sampleBytes > dest.Length) return;
+        sample = Math.Clamp(sample, -1f, 1f);
+        if (format.BitsPerSample == 16)
+        {
+            var pcm = (short)Math.Clamp(Math.Round(sample * 32767f), short.MinValue, short.MaxValue);
+            dest[offset] = (byte)pcm;
+            dest[offset + 1] = (byte)(pcm >> 8);
+            return;
+        }
+        if (format.BitsPerSample == 24)
+        {
+            var pcm = (int)Math.Clamp(Math.Round(sample * 8388607f), -8388608, 8388607);
+            dest[offset] = (byte)pcm;
+            dest[offset + 1] = (byte)(pcm >> 8);
+            dest[offset + 2] = (byte)(pcm >> 16);
+            return;
+        }
+        var wide = (int)Math.Clamp(Math.Round(sample * 8388607f), -8388608, 8388607) << 8;
+        dest[offset] = (byte)wide;
+        dest[offset + 1] = (byte)(wide >> 8);
+        dest[offset + 2] = (byte)(wide >> 16);
+        dest[offset + 3] = (byte)(wide >> 24);
+    }
+
+    private static bool IsFloat(WaveFormat format)
+    {
+        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32) return true;
+        return format is WaveFormatExtensible ext && ext.SubFormat == FloatSubformat && format.BitsPerSample == 32;
+    }
+
+    private static string Describe(WaveFormat format)
+    {
+        var sub = format is WaveFormatExtensible ext
+            ? ext.SubFormat == FloatSubformat ? " sub=float" : ext.SubFormat == PcmSubformat ? " sub=pcm" : " sub=" + ext.SubFormat
+            : "";
+        return $"{format.Encoding} {format.SampleRate}Hz {format.BitsPerSample}-bit {format.Channels}ch block={format.BlockAlign}{sub}";
+    }
+
+    private sealed class OpenedClient : IDisposable
+    {
+        public OpenedClient(AudioClient client, EventWaitHandle wait, WaveFormat stream, int sampleRate, int channels)
+        {
+            Client = client;
+            Wait = wait;
+            Stream = stream;
+            SampleRate = sampleRate;
+            Channels = channels;
+        }
+
+        public AudioClient Client { get; }
+        public EventWaitHandle Wait { get; }
+        public WaveFormat Stream { get; }
+        public int SampleRate { get; }
+        public int Channels { get; }
+
+        public void Dispose()
+        {
+            try { Client.Stop(); } catch { /* already stopped */ }
+            try { Client.Dispose(); } catch { /* already stopped */ }
+            Wait.Dispose();
+        }
+    }
+
+    private sealed class WasapiPump : IDisposable
+    {
+        public WasapiPump(ChannelId? channel, OpenedClient opened, bool capture)
+        {
+            Channel = channel;
+            Opened = opened;
+            Capture = capture;
+        }
+
+        public ChannelId? Channel { get; }
+        public OpenedClient Opened { get; }
+        public bool Capture { get; }
+        public Thread? Thread { get; set; }
+        public volatile bool Stop;
+        public int Discontinuity;
+        public int Silent;
+        public int Failures;
+        public int Short;
+        public float[] Scratch = new float[2048];
+        public byte[] Bytes = new byte[4096];
+
+        public int TakeDiscontinuity() => Interlocked.Exchange(ref Discontinuity, 0);
+        public int TakeSilent() => Interlocked.Exchange(ref Silent, 0);
+        public int TakeFailures() => Interlocked.Exchange(ref Failures, 0);
+        public int TakeShort() => Interlocked.Exchange(ref Short, 0);
+
+        public void Dispose()
+        {
+            Stop = true;
+            try { Opened.Wait.Set(); } catch { /* already gone */ }
+            try { Thread?.Join(500); } catch { /* background */ }
+            Opened.Dispose();
+        }
+    }
+
+    private sealed class ChannelTap
     {
         private readonly LiveMix _live;
         private readonly int _destRate;
         private readonly FrameResampler _resampler;
-        private float[] _decode = new float[2048];
-        private float[] _resampled = new float[4096];
-        public ChannelTap(ChannelId channel, LiveMix live, bool separate, int destRate)
-        {
-            Channel = channel;
-            _live = live;
-            Separate = separate;
-            _destRate = destRate;
-            _resampler = new FrameResampler();
-            _ring = new DriftRing(destRate);
-        }
-
-        public ChannelId Channel { get; }
-        public bool Separate { get; }
-        public WasapiCapture? Capture { get; set; }
-        public float Peak { get; private set; }
-        public float Gain => _live.MixGain(Channel);
         private readonly DriftRing _ring;
+        private float[] _decode = new float[4096];
+        private float[] _resampled = new float[4096];
         private float[] _pullL = new float[512];
         private float[] _pullR = new float[512];
         private int _underrun;
         private int _insert;
         private int _overrun;
+        private int _buffered;
 
-        public void MixInto(float[] left, float[] right, int frames, float gain)
+        public ChannelTap(ChannelId channel, LiveMix live, int sourceRate, int periodMs)
+        {
+            Channel = channel;
+            _live = live;
+            _destRate = sourceRate;
+            _resampler = new FrameResampler();
+            _ring = new DriftRing(sourceRate, periodMs);
+            Ramp = live.MixGain(channel);
+        }
+
+        public ChannelId Channel { get; }
+        public float Peak { get; private set; }
+        public float Gain => _live.MixGain(Channel);
+        public float Ramp;
+
+        public void WriteSilence(int frames)
+        {
+            if (frames <= 0) return;
+            if (_decode.Length < frames * 2) _decode = new float[frames * 2];
+            Array.Clear(_decode, 0, frames * 2);
+            Peak = 0f;
+            Commit(frames);
+        }
+
+        public void WritePacket(IntPtr data, int frames, WaveFormat format)
+        {
+            var channels = Math.Max(1, format.Channels);
+            var interleaved = frames * 2;
+            if (_decode.Length < interleaved) _decode = new float[interleaved];
+            var bytes = frames * Math.Max(format.BlockAlign, 1);
+            var raw = new byte[Math.Max(bytes, 1)];
+            if (data != IntPtr.Zero && bytes > 0)
+                Marshal.Copy(data, raw, 0, Math.Min(bytes, raw.Length));
+            var peak = 0f;
+            for (var frame = 0; frame < frames; frame++)
+            {
+                var (left, right) = Sample(raw, frame, channels, format);
+                _decode[frame * 2] = left;
+                _decode[frame * 2 + 1] = right;
+                peak = Math.Max(peak, Math.Max(Math.Abs(left), Math.Abs(right)));
+            }
+            Peak = peak;
+            Commit(frames);
+        }
+
+        public void MixInto(float[] left, float[] right, int frames, float gainStart, float gainEnd)
         {
             if (frames <= 0) return;
             if (_pullL.Length < frames)
@@ -269,11 +530,12 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                 _pullL = new float[frames];
                 _pullR = new float[frames];
             }
-            var (missing, inserted, dropped, buffered) = _ring.Read(_pullL, _pullR, frames, gain);
+            var (missing, inserted, dropped, buffered) = _ring.Read(_pullL, _pullR, frames, 1f);
             for (var i = 0; i < frames; i++)
             {
-                left[i] += _pullL[i];
-                right[i] += _pullR[i];
+                var gain = frames == 1 ? gainEnd : gainStart + (gainEnd - gainStart) * ((i + 1f) / frames);
+                left[i] += _pullL[i] * gain;
+                right[i] += _pullR[i] * gain;
             }
             if (missing > 0) Interlocked.Add(ref _underrun, missing);
             if (inserted > 0) Interlocked.Add(ref _insert, inserted);
@@ -281,63 +543,59 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
             Volatile.Write(ref _buffered, buffered);
         }
 
-        private int _buffered;
-
         public (int Underrun, int Insert, int Overrun, int Buffered) TakeDrift() =>
             (Interlocked.Exchange(ref _underrun, 0), Interlocked.Exchange(ref _insert, 0), Interlocked.Exchange(ref _overrun, 0), Volatile.Read(ref _buffered));
 
-        public void Write(byte[] buffer, int bytes, WaveFormat format)
+        private void Commit(int frames)
         {
-            var frames = Decode(buffer, bytes, format);
-            if (frames <= 0) return;
-            var outFrames = format.SampleRate == _destRate
-                ? frames
-                : (int)Math.Ceiling(frames * (_destRate / (double)Math.Max(1, format.SampleRate))) + 8;
-            if (_resampled.Length < outFrames * 2) _resampled = new float[outFrames * 2];
-            var produced = _resampler.Process(_decode, frames, format.SampleRate, _destRate, _resampled);
+            var produced = _resampler.Process(_decode, frames, _destRate, _destRate, EnsureResampled(frames));
             if (produced <= 0) return;
             var dropped = _ring.Write(_resampled, produced);
             if (dropped > 0) Interlocked.Add(ref _overrun, dropped);
         }
 
-        public void Dispose()
+        private float[] EnsureResampled(int frames)
         {
-            try { Capture?.StopRecording(); } catch { /* already stopped */ }
-            try { Capture?.Dispose(); } catch { /* already stopped */ }
+            if (_resampled.Length < frames * 2) _resampled = new float[frames * 2];
+            return _resampled;
         }
 
-        private int Decode(byte[] buffer, int bytes, WaveFormat format)
+        private static (float Left, float Right) Sample(byte[] raw, int frame, int channels, WaveFormat format)
         {
-            var channels = Math.Max(1, format.Channels);
-            int frames;
-            var float32 = format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32;
-            var pcm16 = format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 16;
-            if (float32) frames = bytes / (4 * channels);
-            else if (pcm16) frames = bytes / (2 * channels);
-            else return 0;
-            if (frames <= 0) return 0;
-            if (_decode.Length < frames * 2) _decode = new float[frames * 2];
-            var peak = 0f;
-            for (var frame = 0; frame < frames; frame++)
+            float At(int channel)
             {
-                float left, right;
-                if (float32)
+                var sampleBytes = format.BitsPerSample switch
                 {
-                    left = BitConverter.ToSingle(buffer, (frame * channels) * 4);
-                    right = channels > 1 ? BitConverter.ToSingle(buffer, (frame * channels + 1) * 4) : left;
-                }
-                else
+                    24 => 3,
+                    32 => 4,
+                    _ => 2
+                };
+                var offset = frame * format.BlockAlign + channel * sampleBytes;
+                if (offset < 0 || offset + sampleBytes > raw.Length) return 0f;
+                if (IsFloatFormat(format))
+                    return BitConverter.ToSingle(raw, offset);
+                if (format.BitsPerSample == 16)
+                    return BitConverter.ToInt16(raw, offset) / 32768f;
+                if (format.BitsPerSample == 24)
                 {
-                    left = BitConverter.ToInt16(buffer, (frame * channels) * 2) / 32768f;
-                    right = channels > 1 ? BitConverter.ToInt16(buffer, (frame * channels + 1) * 2) / 32768f : left;
+                    var value = raw[offset] | (raw[offset + 1] << 8) | (raw[offset + 2] << 16);
+                    if ((value & 0x800000) != 0) value |= unchecked((int)0xFF000000);
+                    return value / 8388608f;
                 }
-                _decode[frame * 2] = left;
-                _decode[frame * 2 + 1] = right;
-                peak = Math.Max(peak, Math.Max(Math.Abs(left), Math.Abs(right)));
+                var packed = BitConverter.ToInt32(raw, offset);
+                return format.BitsPerSample == 32 && format.BlockAlign / Math.Max(1, channels) == 4 && !IsFloatFormat(format)
+                    ? (packed >> 8) / 8388608f
+                    : packed / 2147483648f;
             }
-            Peak = peak;
-            return frames;
+
+            var left = At(0);
+            var right = channels > 1 ? At(1) : left;
+            return (left, right);
         }
+
+        private static bool IsFloatFormat(WaveFormat format) =>
+            format.Encoding == WaveFormatEncoding.IeeeFloat
+            || (format is WaveFormatExtensible ext && ext.SubFormat == FloatSubformat);
     }
 
     private sealed class FrameResampler
@@ -354,15 +612,11 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                 var samples = frames * 2;
                 if (output.Length < samples) return 0;
                 Array.Copy(input, output, samples);
-                _edgeL = input[samples - 2];
-                _edgeR = input[samples - 1];
                 return frames;
             }
 
             var needed = (int)Math.Ceiling(frames * (outRate / (double)inRate)) + 4;
-            if (output.Length < needed * 2)
-                return 0;
-            // Caller grows the buffer. Signal by returning -1? We'll grow outside if 0 and rates differ.
+            if (output.Length < needed * 2) return 0;
             var step = inRate / (double)outRate;
             var produced = 0;
             var pos = _origin;
@@ -371,12 +625,12 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                 var index = (int)Math.Floor(pos);
                 var frac = pos - index;
                 float l0, r0, l1, r1;
-                if (index < 0)
+                if (index <= 0)
                 {
-                    l0 = _edgeL;
-                    r0 = _edgeR;
-                    l1 = input[0];
-                    r1 = input[1];
+                    l0 = index < 0 ? _edgeL : input[0];
+                    r0 = index < 0 ? _edgeR : input[1];
+                    l1 = input[Math.Min(frames - 1, Math.Max(0, index + 1)) * 2];
+                    r1 = input[Math.Min(frames - 1, Math.Max(0, index + 1)) * 2 + 1];
                 }
                 else if (index >= frames - 1)
                 {
@@ -392,13 +646,11 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                     l1 = input[(index + 1) * 2];
                     r1 = input[(index + 1) * 2 + 1];
                 }
-
                 output[produced * 2] = (float)(l0 + (l1 - l0) * frac);
                 output[produced * 2 + 1] = (float)(r0 + (r1 - r0) * frac);
                 produced++;
                 pos += step;
             }
-
             _edgeL = input[(frames - 1) * 2];
             _edgeR = input[(frames - 1) * 2 + 1];
             _origin = pos - frames;
@@ -406,10 +658,6 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         }
     }
 
-    /// <summary>
-    /// Stereo frames for one capture. The render clock drops or repeats a frame when this
-    /// source runs ahead of or behind the master device.
-    /// </summary>
     private sealed class DriftRing
     {
         private readonly float[] _left;
@@ -426,9 +674,9 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         private float _holdL;
         private float _holdR;
 
-        public DriftRing(int sampleRate)
+        public DriftRing(int sampleRate, int periodMs)
         {
-            var period = Math.Max(32, sampleRate * PeriodMs / 1000);
+            var period = Math.Max(32, sampleRate * periodMs / 1000);
             _target = period * 4;
             _low = period * 2;
             _high = period * 6;
@@ -451,13 +699,11 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                         _count--;
                         dropped++;
                     }
-
                     var at = (_read + _count) % _capacity;
                     _left[at] = interleaved[i * 2];
                     _right[at] = interleaved[i * 2 + 1];
                     _count++;
                 }
-
                 return dropped;
             }
         }
@@ -508,10 +754,7 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                     right[filled] = _holdR * gain;
                     filled++;
                 }
-                else
-                {
-                    inserted = 0;
-                }
+                else inserted = 0;
 
                 if (filled < frames)
                 {
@@ -522,7 +765,6 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                         right[i] = _holdR * gain;
                     }
                 }
-
                 return (missing, inserted, dropped, _count);
             }
         }

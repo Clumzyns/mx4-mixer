@@ -26,6 +26,10 @@ public sealed class MixerConfig
     public bool InvertVolumeKnob { get; set; }
     /// <summary>Highest 07 25 position seen. Defaults to 56, the base station's silence stop.</summary>
     public int VolumeKnobMax { get; set; } = ChatMixMath.DefaultVolumeKnobMax;
+    /// <summary>Shared-mode capture and render period. 10, 20, or 40 milliseconds.</summary>
+    public int MixLatencyMs { get; set; } = 20;
+    /// <summary>Debug: send the Game cable to the master output without summing the other channels.</summary>
+    public bool GameStraightThrough { get; set; }
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -76,6 +80,7 @@ public sealed class MixerConfig
         MasterVolume = VolumeMath.NormalizeStored(MasterVolume);
         if (VolumeKnobMax < 1) VolumeKnobMax = ChatMixMath.DefaultVolumeKnobMax;
         if (VolumeKnobMax > 255) VolumeKnobMax = 255;
+        if (MixLatencyMs is not (10 or 20 or 40)) MixLatencyMs = 20;
     }
 
     public ChannelSettings Channel(ChannelId id)

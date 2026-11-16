@@ -337,6 +337,12 @@
                     ToolTip="By default knob position 0 is full volume and 56 is silent. Turn this on to swap that."/>
           <CheckBox Content="Custom base station display" IsChecked="{Binding CustomDisplay}"
                     ToolTip="Draw master, ChatMix, and the four channel levels on the Nova Pro screen. The stock screen returns when Mixer exits."/>
+          <TextBlock Text="Latency" Margin="0,14,0,4"/>
+          <ComboBox Width="120" HorizontalAlignment="Left" ItemsSource="{Binding LatencyChoices}" SelectedItem="{Binding MixLatencyMs}"/>
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
+                     Text="Shared-mode period for the cable captures and the master render, in milliseconds."/>
+          <CheckBox Content="Debug: pass Game straight through" IsChecked="{Binding GameStraightThrough}" Margin="0,12,0,0"
+                    ToolTip="Send only the Game cable to the master output, with no other channels mixed in."/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
                      Text="The base station knob is attenuation: position 0 is full master volume and 56 is silent. A higher position than 56 extends the scale. ChatMix reports move Game and Chat as they arrive."/>
           <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
