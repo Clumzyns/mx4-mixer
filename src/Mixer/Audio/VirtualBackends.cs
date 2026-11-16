@@ -1,88 +1,81 @@
 namespace Mixer.Audio;
 
 /// <summary>
-/// Picks the virtual playback device for a channel. Sonar's signed driver is first.
-/// Names beginning with "Mixer - " are reserved for a later custom driver.
+/// Finds Eugene Muzychenko Virtual Audio Cable lines.
+/// Each line is a render endpoint apps play into and a capture endpoint Mixer records.
 /// </summary>
-internal static class VirtualBackends
+internal static class VacCables
 {
-    public static bool TryMap(string friendlyName, out ChannelId channel, out string backend)
+    public static IReadOnlyList<VacCable> Discover(
+        IEnumerable<(string Id, string Name)> render,
+        IEnumerable<(string Id, string Name)> capture)
     {
-        var name = friendlyName.Trim();
-        if (TrySonar(name, out channel))
+        var playback = new Dictionary<string, (string Id, string Name, int Order)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in render)
         {
-            backend = "Sonar";
-            return true;
+            if (!TryKey(device.Name, out var key, out var order)) continue;
+            playback[key] = (device.Id, device.Name, order);
         }
 
-        if (TryCustom(name, out channel))
+        var recording = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in capture)
         {
-            backend = "Mixer";
-            return true;
+            if (!TryKey(device.Name, out var key, out _)) continue;
+            recording[key] = device.Id;
         }
 
-        channel = ChannelId.System;
-        backend = "";
-        return false;
+        var cables = new List<VacCable>();
+        foreach (var (key, play) in playback)
+        {
+            recording.TryGetValue(key, out var captureId);
+            cables.Add(new VacCable
+            {
+                Key = key,
+                RenderId = play.Id,
+                CaptureId = captureId,
+                Label = LabelOf(play.Name),
+                Order = play.Order
+            });
+        }
+
+        return cables.OrderBy(cable => cable.Order).ThenBy(cable => cable.Label, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public static bool IsSonarMicrophone(string friendlyName)
+    public static bool TryKey(string friendlyName, out string key, out int order)
     {
-        var name = friendlyName.ToLowerInvariant();
-        return name.Contains("sonar") && name.Contains("microphone");
+        key = "";
+        order = 1000;
+        if (string.IsNullOrWhiteSpace(friendlyName)) return false;
+        var text = friendlyName.Trim();
+        var lower = text.ToLowerInvariant();
+        var vac = lower.Contains("virtual audio cable") || lower.StartsWith("mixer - ");
+        if (!vac) return false;
+        key = LabelOf(text).ToLowerInvariant();
+        order = OrderOf(key);
+        return key.Length > 0;
     }
 
-    private static bool TrySonar(string name, out ChannelId channel)
+    public static string LabelOf(string friendlyName)
     {
-        var text = name.ToLowerInvariant();
-        if (!text.Contains("sonar"))
-        {
-            channel = ChannelId.System;
-            return false;
-        }
-
-        if (text.Contains("gaming") || text.Contains("game"))
-        {
-            channel = ChannelId.Game;
-            return true;
-        }
-
-        if (text.Contains("chat"))
-        {
-            channel = ChannelId.Chat;
-            return true;
-        }
-
-        if (text.Contains("media"))
-        {
-            channel = ChannelId.Media;
-            return true;
-        }
-
-        if (text.Contains("aux"))
-        {
-            channel = ChannelId.Aux;
-            return true;
-        }
-
-        channel = ChannelId.System;
-        return false;
+        var paren = friendlyName.IndexOf('(');
+        var head = (paren > 0 ? friendlyName[..paren] : friendlyName).Trim();
+        return head.Length == 0 ? friendlyName.Trim() : head;
     }
 
-    private static bool TryCustom(string name, out ChannelId channel)
+    private static int OrderOf(string key)
     {
-        var text = name.ToLowerInvariant();
-        if (!text.StartsWith("mixer - "))
-        {
-            channel = ChannelId.System;
-            return false;
-        }
-
-        if (text.Contains("game")) { channel = ChannelId.Game; return true; }
-        if (text.Contains("chat")) { channel = ChannelId.Chat; return true; }
-        if (text.Contains("media")) { channel = ChannelId.Media; return true; }
-        if (text.Contains("aux")) { channel = ChannelId.Aux; return true; }
-        channel = ChannelId.System;
-        return false;
+        var parts = key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 0 && int.TryParse(parts[^1], out var number))
+            return number;
+        return 1000;
     }
+}
+
+internal sealed class VacCable
+{
+    public required string Key { get; init; }
+    public required string RenderId { get; init; }
+    public string? CaptureId { get; init; }
+    public required string Label { get; init; }
+    public int Order { get; init; }
 }

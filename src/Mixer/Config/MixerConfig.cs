@@ -21,6 +21,7 @@ public sealed class MixerConfig
     public Dictionary<string, string> Assignments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, float> BaseVolumes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, bool> AppMuted { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> CableAssignments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public static MixerConfig CreateDefault()
     {
@@ -48,6 +49,9 @@ public sealed class MixerConfig
         Assignments = Normalize(Assignments, static value => value?.Trim().ToLowerInvariant() ?? "system");
         BaseVolumes = Normalize(BaseVolumes, static value => VolumeMath.NormalizeStored(value));
         AppMuted = Normalize(AppMuted, static value => value);
+        CableAssignments = Normalize(CableAssignments, static value => value?.Trim() ?? "");
+        foreach (var key in CableAssignments.Where(pair => string.IsNullOrWhiteSpace(pair.Value)).Select(pair => pair.Key).ToList())
+            CableAssignments.Remove(key);
     }
 
     public ChannelSettings Channel(ChannelId id)

@@ -146,6 +146,19 @@ public partial class MainWindow : Window
             viewModel.SelectInput(id);
     }
 
+    private void Cable_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel || viewModel.IsSyncing) return;
+        if (sender is not ComboBox box || box.SelectedValue is not string id || id.Length == 0) return;
+        switch (box.Tag as string)
+        {
+            case "game": viewModel.GameCableId = id; break;
+            case "chat": viewModel.ChatCableId = id; break;
+            case "media": viewModel.MediaCableId = id; break;
+            case "aux": viewModel.AuxCableId = id; break;
+        }
+    }
+
     private void ChannelDevice_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (DataContext is not MainViewModel viewModel || viewModel.IsSyncing) return;

@@ -6,12 +6,14 @@ The window title and tray name come from `AppInfo.Name` in `src/Mixer/AppInfo.cs
 
 ## Setup
 
-1. Install SteelSeries GG once and open Sonar so Windows creates `SteelSeries Sonar - Gaming`, `Chat`, `Media`, and `Aux`.
-2. Quit SteelSeries GG. Mixer has a Close SteelSeries button because GG takes the dial and mixes a second time.
-3. Set OUTPUT to the IEM DAC, for example Fosi Audio K5 Pro. Leave each channel on Master mix.
-4. Point games at SteelSeries Sonar - Gaming and Discord at SteelSeries Sonar - Chat, or let Mixer route them there.
+1. Install [Virtual Audio Cable](https://vac.muzychenko.net/en/download.htm) by Eugene Muzychenko.
+2. Open VAC Control Panel and set the number of cables to 4. Restart Mixer after Windows shows Line 1 through Line 4.
+3. In Mixer settings, check the Game, Chat, Media, and Aux cable dropdowns. They default to Line 1 through Line 4.
+4. Optional: Rename to Mixer - Game, Chat, Media, and Aux. Windows asks for administrator approval.
+5. Set OUTPUT to the IEM DAC, for example Fosi Audio K5 Pro. Leave each channel on Master mix.
+6. Quit SteelSeries GG if it is open so the Nova Pro dial stays with Mixer.
 
-A custom `Mixer - Game` driver is not installed by this build. See `driver/README.md`.
+Apps play into a cable's playback device. Mixer records that cable and sends the mix to the master output.
 
 ## Run
 
@@ -29,7 +31,7 @@ That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the mac
 
 - The top bar picks the Windows default speakers and microphone for the console, multimedia, and communications roles.
 - The mic button mutes that microphone. The bar next to it is the live input level.
-- When SteelSeries Sonar devices are installed, Mixer loopback-captures Gaming, Chat, Media, and Aux, applies the faders, and plays the mix to the master output.
+- Virtual Audio Cable lines are the channel inputs. Mixer records each cable, applies the faders, and plays the mix to the master output.
 - ChatMix reads the Nova Pro dial on USB interface 4 (`0x06 0x49 0x01` and `0x06 0x8D 0x01`). Game and Chat follow the dial. Quit SteelSeries GG first.
 - **Master mix** keeps a channel in that mix. Any other device on the channel plays that channel there instead.
 - Drag an app chip onto a column, or use the menu on the chip. Discord, TeamSpeak, Spotify, Chrome, Firefox, Edge, and VLC start on Chat or Media. Everything else starts on System.
@@ -37,7 +39,7 @@ That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the mac
 
 ## Limits
 
-- Mixer does not ship its own virtual audio driver. It uses Sonar's signed devices. Those devices have to exist before the mix can start.
+- Mixer does not ship a virtual audio driver. Install Virtual Audio Cable and create 4 lines. The mix cannot start until those recording devices exist.
 - Per-app device routing needs Windows 10 1803 (build 17134) or later. Older Windows can still use the faders when changing the default device works.
 - Exclusive-mode WASAPI, ASIO, and apps that pick their own device ignore the per-app route.
 - A stream that is already playing may stay on the old device until the app opens a new one.

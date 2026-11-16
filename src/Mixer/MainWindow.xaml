@@ -115,7 +115,7 @@
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding SonarWarning}" TextWrapping="Wrap" Foreground="#FFC56A" VerticalAlignment="Center"/>
+        <TextBlock Text="{Binding SetupWarning}" TextWrapping="Wrap" Foreground="#FFC56A" VerticalAlignment="Center"/>
         <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="Close SteelSeries" Margin="12,0,0,0"
                 Command="{Binding CloseSonarCommand}"/>
       </Grid>
@@ -167,14 +167,14 @@
                   </Grid.ColumnDefinitions>
                   <Ellipse Width="8" Height="8" Fill="{Binding Accent}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                   <StackPanel Grid.Column="1">
-                    <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding DisplayTitle}" FontSize="14" FontWeight="SemiBold"/>
                     <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource FaintBrush}" FontSize="11"/>
                   </StackPanel>
                   <TextBlock Grid.Column="2" Text="{Binding AppCountLabel}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center"/>
                 </Grid>
                 <ComboBox Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding DataContext.OutputChoices, RelativeSource={RelativeSource AncestorType=Window}}"
                           SelectedValuePath="Id" SelectedValue="{Binding DeviceId, Mode=OneWay}" SelectionChanged="ChannelDevice_SelectionChanged"
-                          ToolTip="Default follows the master output"/>
+                          ToolTip="Master mix sends this channel to the master output. Pick another device to play it somewhere else."/>
                 <Grid Grid.Row="2" Margin="0,8">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="10"/>
@@ -272,12 +272,26 @@
     </Grid>
 
     <Border Grid.RowSpan="5" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
-      <Border HorizontalAlignment="Right" Width="380" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
+      <Border HorizontalAlignment="Right" Width="400" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
           <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
           <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource FaintBrush}" Margin="0,4,0,16"/>
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
+          <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12"
+                     Text="Install Virtual Audio Cable, open its control panel, and set the cable count to 4. Apps play into each line. Mixer records that line and sends the mix to the master output."/>
+          <Button Style="{StaticResource GhostButton}" Content="Download Virtual Audio Cable" Command="{Binding OpenVacDownloadCommand}" HorizontalAlignment="Left" Margin="0,8,0,8"/>
+          <TextBlock Text="Game" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,6,0,2"/>
+          <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding GameCableId, Mode=OneWay}" Tag="game" SelectionChanged="Cable_SelectionChanged"/>
+          <TextBlock Text="Chat" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding ChatCableId, Mode=OneWay}" Tag="chat" SelectionChanged="Cable_SelectionChanged"/>
+          <TextBlock Text="Media" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding MediaCableId, Mode=OneWay}" Tag="media" SelectionChanged="Cable_SelectionChanged"/>
+          <TextBlock Text="Aux" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding AuxCableId, Mode=OneWay}" Tag="aux" SelectionChanged="Cable_SelectionChanged"/>
+          <Button Style="{StaticResource GhostButton}" Content="Rename to Mixer - Game, Chat, Media, Aux" Command="{Binding RenameCablesCommand}" HorizontalAlignment="Left" Margin="0,12,0,0"/>
           <Button Style="{StaticResource GhostButton}" Content="Open config folder" Command="{Binding OpenConfigCommand}" HorizontalAlignment="Left" Margin="0,16,0,0"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,18,0,0"
                      Text="Default on a channel follows the master output. Pick a device on the channel to send every app in it there. New audio follows the channel; a stream that is already playing may stay put until the app opens another one."/>
@@ -285,6 +299,7 @@
                      Text="Discord, TeamSpeak, Spotify, Chrome, Firefox, Edge, and VLC land in Chat or Media the first time they play. Drag a chip, or use its menu, to move it. The choice is remembered by the program name."/>
           <Button Style="{StaticResource GhostButton}" Content="Close" HorizontalAlignment="Left" Margin="0,20,0,0" Click="Settings_Click"/>
         </StackPanel>
+        </ScrollViewer>
       </Border>
     </Border>
 

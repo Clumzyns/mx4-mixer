@@ -24,6 +24,7 @@ public sealed class ChannelSnapshot
     public float Volume { get; init; }
     public bool Muted { get; init; }
     public string? DeviceId { get; init; }
+    public string CableLabel { get; init; } = "";
 }
 
 public sealed class MixerSnapshot
@@ -40,6 +41,7 @@ public sealed class MixerSnapshot
     public bool VirtualMixActive { get; init; }
     public string SonarWarning { get; init; } = "";
     public string BackendName { get; init; } = "";
+    public IReadOnlyList<DeviceSnapshot> Cables { get; init; } = [];
 }
 
 public sealed class PeakUpdate

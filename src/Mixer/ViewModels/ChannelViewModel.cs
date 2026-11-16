@@ -33,6 +33,8 @@ public sealed class ChannelViewModel : ObservableObject
     public ChannelId Id { get; }
     public string Name { get; }
     public string Subtitle { get; }
+    private string _cableLabel = "";
+    public string DisplayTitle => string.IsNullOrEmpty(_cableLabel) ? Name : $"{Name} ({_cableLabel})";
     public Brush Accent { get; }
     public ObservableCollection<AppChipViewModel> Apps { get; } = new();
     public RelayCommand ToggleMuteCommand { get; }
@@ -98,6 +100,11 @@ public sealed class ChannelViewModel : ObservableObject
             Volume = snap.Volume * 100.0;
             Muted = snap.Muted;
             DeviceId = snap.DeviceId ?? "";
+            if (_cableLabel != snap.CableLabel)
+            {
+                _cableLabel = snap.CableLabel;
+                Raise(nameof(DisplayTitle));
+            }
         }
         finally
         {

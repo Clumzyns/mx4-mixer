@@ -29,6 +29,10 @@ public sealed class MainViewModel : ObservableObject
     private string _chatMixDetail = "Looking for the Nova Pro base station…";
     private string _sonarWarning = "";
     private bool _virtualMixActive;
+    private string _gameCableId = "";
+    private string _chatCableId = "";
+    private string _mediaCableId = "";
+    private string _auxCableId = "";
 
     public MainViewModel(AudioEngine engine, MixerConfig config, ChatMixMonitor chatMix)
     {
@@ -47,6 +51,8 @@ public sealed class MainViewModel : ObservableObject
         ToggleSettingsCommand = new RelayCommand(() => SettingsOpen = !SettingsOpen);
         OpenConfigCommand = new RelayCommand(OpenConfigFolder);
         CloseSonarCommand = new RelayCommand(() => _engine.CloseSteelSeries());
+        OpenVacDownloadCommand = new RelayCommand(OpenVacDownload);
+        RenameCablesCommand = new RelayCommand(RenameCables);
         _engine.StructureChanged += (_, snap) => Apply(snap);
         _engine.PeaksChanged += (_, peaks) => ApplyPeaks(peaks);
     }
@@ -59,9 +65,17 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ToggleSettingsCommand { get; }
     public RelayCommand OpenConfigCommand { get; }
     public RelayCommand CloseSonarCommand { get; }
-    public string SonarWarning => _sonarWarning;
+    public RelayCommand OpenVacDownloadCommand { get; }
+    public RelayCommand RenameCablesCommand { get; }
+    public ObservableCollection<DeviceOption> VacCables { get; } = new();
+    public string SetupWarning => _sonarWarning;
     public bool ShowSonarWarning => !string.IsNullOrWhiteSpace(_sonarWarning);
     public bool VirtualMixActive => _virtualMixActive;
+
+    public string GameCableId { get => _gameCableId; set => SetCable(ChannelId.Game, ref _gameCableId, value); }
+    public string ChatCableId { get => _chatCableId; set => SetCable(ChannelId.Chat, ref _chatCableId, value); }
+    public string MediaCableId { get => _mediaCableId; set => SetCable(ChannelId.Media, ref _mediaCableId, value); }
+    public string AuxCableId { get => _auxCableId; set => SetCable(ChannelId.Aux, ref _auxCableId, value); }
     public bool IsSyncing => _syncing > 0;
     public string VersionText => "Version " + AppInfo.Version;
     public string ConfigPath => ConfigStore.FilePath;
@@ -210,10 +224,16 @@ public sealed class MainViewModel : ObservableObject
             RoutingAvailable = snap.RoutingAvailable;
             _sonarWarning = snap.SonarWarning;
             _virtualMixActive = snap.VirtualMixActive;
-            Raise(nameof(SonarWarning));
+            Raise(nameof(SetupWarning));
             Raise(nameof(ShowSonarWarning));
             Raise(nameof(VirtualMixActive));
             Raise(nameof(NoOutputs));
+
+            Replace(VacCables, snap.Cables.Select(cable => new DeviceOption { Id = cable.Id, Name = cable.Name }).ToList());
+            SetCableFromSnap(ChannelId.Game, snap, ref _gameCableId, nameof(GameCableId));
+            SetCableFromSnap(ChannelId.Chat, snap, ref _chatCableId, nameof(ChatCableId));
+            SetCableFromSnap(ChannelId.Media, snap, ref _mediaCableId, nameof(MediaCableId));
+            SetCableFromSnap(ChannelId.Aux, snap, ref _auxCableId, nameof(AuxCableId));
 
             foreach (var channelSnap in snap.Channels)
             {
@@ -305,6 +325,50 @@ public sealed class MainViewModel : ObservableObject
         target.Clear();
         foreach (var item in items)
             target.Add(item);
+    }
+
+    private void SetCable(ChannelId channel, ref string field, string? value)
+    {
+        value ??= "";
+        if (string.Equals(field, value, StringComparison.OrdinalIgnoreCase)) return;
+        field = value;
+        Raise(channel switch
+        {
+            ChannelId.Game => nameof(GameCableId),
+            ChannelId.Chat => nameof(ChatCableId),
+            ChannelId.Media => nameof(MediaCableId),
+            _ => nameof(AuxCableId)
+        });
+        if (!IsSyncing && !string.IsNullOrEmpty(value))
+            _engine.SetCable(channel, value);
+    }
+
+    private void SetCableFromSnap(ChannelId channel, MixerSnapshot snap, ref string field, string propertyName)
+    {
+        var id = "";
+        var key = channel.Key();
+        var assigned = snap.Channels.FirstOrDefault(item => item.Id == channel);
+        if (assigned != null && _config.CableAssignments.TryGetValue(key, out var saved))
+            id = saved;
+        if (string.Equals(field, id, StringComparison.OrdinalIgnoreCase)) return;
+        field = id;
+        Raise(propertyName);
+    }
+
+    private void OpenVacDownload()
+    {
+        Process.Start(new ProcessStartInfo("https://vac.muzychenko.net/en/download.htm") { UseShellExecute = true });
+    }
+
+    private void RenameCables()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return;
+        Process.Start(new ProcessStartInfo(exe, "--rename-cables")
+        {
+            UseShellExecute = true,
+            Verb = "runas"
+        });
     }
 
     private void OpenConfigFolder()

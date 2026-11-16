@@ -38,10 +38,11 @@ public sealed class AudioEngine : IDisposable
     private bool _scanAgain;
     private bool _disposed;
     private readonly Dictionary<ChannelId, string> _virtualInputs = new();
+    private readonly Dictionary<ChannelId, string> _virtualCaptures = new();
+    private List<VacCable> _cables = [];
     private VirtualMixGraph? _mix;
     private string _mixSignature = "";
     private bool _virtualMixActive;
-    private bool _sonarMicrophone;
     private string _sonarWarning = "";
     private string _backendName = "";
 
@@ -182,6 +183,15 @@ public sealed class AudioEngine : IDisposable
         _config.BaseVolumes[exeKey.Trim().ToLowerInvariant()] = VolumeMath.Clamp(volume);
         QueueGain();
         ScheduleSave();
+    }
+
+    public void SetCable(ChannelId channel, string renderId)
+    {
+        if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)) return;
+        _config.CableAssignments[channel.Key()] = renderId;
+        _routed.Clear();
+        ScheduleSave();
+        RequestScan();
     }
 
     public int CloseSteelSeries()
@@ -672,12 +682,16 @@ public sealed class AudioEngine : IDisposable
         var channels = ChannelIds.All.Select(id =>
         {
             var settings = _config.Channel(id);
+            var label = "";
+            if (_virtualInputs.TryGetValue(id, out var renderId))
+                label = _cables.FirstOrDefault(cable => SameDevice(cable.RenderId, renderId))?.Label ?? "";
             return new ChannelSnapshot
             {
                 Id = id,
                 Volume = settings.Volume,
                 Muted = settings.Muted,
-                DeviceId = settings.DeviceId
+                DeviceId = settings.DeviceId,
+                CableLabel = label
             };
         }).ToList();
 
@@ -694,7 +708,8 @@ public sealed class AudioEngine : IDisposable
             RoutingAvailable = _router != null,
             VirtualMixActive = _virtualMixActive,
             SonarWarning = _sonarWarning,
-            BackendName = _backendName
+            BackendName = _backendName,
+            Cables = _cables.Select(cable => new DeviceSnapshot { Id = cable.RenderId, Name = cable.Label }).ToList()
         });
     }
 
@@ -761,43 +776,72 @@ public sealed class AudioEngine : IDisposable
     private void DiscoverVirtualInputs()
     {
         _virtualInputs.Clear();
-        _sonarMicrophone = false;
+        _virtualCaptures.Clear();
         _backendName = "";
-        foreach (var device in _render.Values)
-        {
-            var name = DeviceSnap(device).Name;
-            if (!VirtualBackends.TryMap(name, out var channel, out var backend)) continue;
-            _virtualInputs[channel] = device.ID;
-            _backendName = backend;
-        }
+        var render = _render.Values.Select(device => (device.ID, DeviceSnap(device).Name));
+        var capture = _capture.Values.Select(device => (device.ID, DeviceSnap(device).Name));
+        _cables = VacCables.Discover(render, capture).ToList();
+        AssignDefaultCables();
 
-        foreach (var device in _capture.Values)
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
         {
-            if (VirtualBackends.IsSonarMicrophone(DeviceSnap(device).Name))
-                _sonarMicrophone = true;
+            if (!_config.CableAssignments.TryGetValue(channel.Key(), out var renderId)) continue;
+            var cable = _cables.FirstOrDefault(item => SameDevice(item.RenderId, renderId));
+            if (cable == null || string.IsNullOrWhiteSpace(cable.CaptureId)) continue;
+            _virtualInputs[channel] = cable.RenderId;
+            _virtualCaptures[channel] = cable.CaptureId;
+            _backendName = "VAC";
         }
 
         var gg = SteelSeriesApps.Running();
-        if (gg.Count > 0)
-            _sonarWarning = "SteelSeries is running (" + string.Join(", ", gg.Distinct(StringComparer.OrdinalIgnoreCase)) + "). It will grab the dial and mix on top of Mixer.";
-        else if (_virtualInputs.Count == 0)
-            _sonarWarning = "Sonar virtual devices were not found. Install SteelSeries Sonar once, then quit GG. Mixer will use SteelSeries Sonar - Gaming, Chat, Media, and Aux.";
+        if (_cables.Count == 0)
+            _sonarWarning = "No Virtual Audio Cable lines found. Install VAC, set the cable count to 4, then restart Mixer.";
+        else if (_cables.Count < 4)
+            _sonarWarning = $"Found {_cables.Count} VAC line{(_cables.Count == 1 ? "" : "s")}. Open VAC Control Panel and set Cables to 4 so Game, Chat, Media, and Aux each have one.";
+        else if (gg.Count > 0)
+            _sonarWarning = "SteelSeries is running (" + string.Join(", ", gg.Distinct(StringComparer.OrdinalIgnoreCase)) + "). Quit it so the ChatMix dial stays with Mixer.";
         else if (_masterOutputId != null && _virtualInputs.Values.Any(id => SameDevice(id, _masterOutputId)))
-            _sonarWarning = "The master output is a Sonar device. Choose your IEM DAC, for example Fosi Audio K5 Pro.";
+            _sonarWarning = "The master output is a virtual cable. Choose your IEM DAC, for example Fosi Audio K5 Pro.";
         else
         {
             _sonarWarning = "";
-            _status = "Mixing " + _backendName + " into the master output."
-                + (_sonarMicrophone ? " Sonar microphone is present." : "");
+            if (_virtualInputs.Count > 0)
+                _status = "Mixing VAC lines into the master output.";
+        }
+    }
+
+    private void AssignDefaultCables()
+    {
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            var key = channel.Key();
+            if (_config.CableAssignments.TryGetValue(key, out var assigned) &&
+                _cables.Any(cable => SameDevice(cable.RenderId, assigned)))
+            {
+                used.Add(EndpointIds.Key(assigned));
+                continue;
+            }
+
+            var next = _cables.FirstOrDefault(cable => !used.Contains(EndpointIds.Key(cable.RenderId)));
+            if (next == null)
+            {
+                _config.CableAssignments.Remove(key);
+                continue;
+            }
+
+            _config.CableAssignments[key] = next.RenderId;
+            used.Add(EndpointIds.Key(next.RenderId));
+            ScheduleSave();
         }
     }
 
     private void UpdateMix()
     {
         var masterIsVirtual = _masterOutputId != null && _virtualInputs.Values.Any(id => SameDevice(id, _masterOutputId));
-        var canMix = _virtualInputs.Count > 0 && _masterOutputId != null && !masterIsVirtual && _render.ContainsKey(_masterOutputId);
+        var canMix = _virtualCaptures.Count > 0 && _masterOutputId != null && !masterIsVirtual && _render.ContainsKey(_masterOutputId);
         var signature = canMix
-            ? _backendName + "|" + _masterOutputId + "|" + string.Join(",", _virtualInputs.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value))
+            ? _masterOutputId + "|" + string.Join(",", _virtualCaptures.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value))
               + "|" + string.Join(",", ChannelIds.All.Select(id => id + ":" + (_config.Channel(id).DeviceId ?? "")))
             : "";
         _virtualMixActive = canMix;
@@ -805,13 +849,13 @@ public sealed class AudioEngine : IDisposable
         StopMix();
         _mixSignature = signature;
         if (!canMix) return;
-        var sources = new Dictionary<ChannelId, MMDevice>();
-        foreach (var (channel, id) in _virtualInputs)
+        var captures = new Dictionary<ChannelId, MMDevice>();
+        foreach (var (channel, id) in _virtualCaptures)
         {
-            if (_render.TryGetValue(id, out var device))
-                sources[channel] = device;
+            if (_capture.TryGetValue(id, out var device))
+                captures[channel] = device;
         }
-        _mix = VirtualMixGraph.TryStart(_render[_masterOutputId!], sources, _config, _render);
+        _mix = VirtualMixGraph.TryStart(_render[_masterOutputId!], captures, _virtualInputs, _config, _render);
         if (_mix == null)
         {
             _virtualMixActive = false;
@@ -819,7 +863,7 @@ public sealed class AudioEngine : IDisposable
         }
         else
         {
-            Log.Info("Mixing " + _backendName + " channels to " + _masterOutputId);
+            Log.Info("Mixing VAC lines to " + _masterOutputId);
         }
     }
 

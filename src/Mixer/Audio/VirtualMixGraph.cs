@@ -29,19 +29,22 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
 
     public static VirtualMixGraph? TryStart(
         MMDevice master,
-        IReadOnlyDictionary<ChannelId, MMDevice> sources,
+        IReadOnlyDictionary<ChannelId, MMDevice> captures,
+        IReadOnlyDictionary<ChannelId, string> renderIds,
         MixerConfig config,
         IReadOnlyDictionary<string, MMDevice> outputs)
     {
         var graph = new VirtualMixGraph();
         try
         {
-            foreach (var (channel, source) in sources)
+            foreach (var (channel, source) in captures)
             {
                 if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux))
                     continue;
+                renderIds.TryGetValue(channel, out var renderId);
                 var ownId = config.Channel(channel).DeviceId;
                 var separate = !string.IsNullOrWhiteSpace(ownId)
+                    && !string.Equals(ownId, renderId, StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(ownId, source.ID, StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(ownId, master.ID, StringComparison.OrdinalIgnoreCase)
                     && outputs.TryGetValue(ownId, out _);
@@ -123,8 +126,10 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
     private ChannelTap StartTap(ChannelId channel, MMDevice source, MixerConfig config, bool separate, MMDevice? ownOutput)
     {
         var tap = new ChannelTap(channel, config, separate);
-        var capture = new WasapiLoopbackCapture(source);
-        capture.ShareMode = AudioClientShareMode.Shared;
+        var capture = new WasapiCapture(source)
+        {
+            ShareMode = AudioClientShareMode.Shared
+        };
         capture.DataAvailable += (_, args) => tap.Write(args.Buffer, args.BytesRecorded, capture.WaveFormat);
         capture.StartRecording();
         tap.Capture = capture;
@@ -160,7 +165,7 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
         public bool Separate { get; }
         public FloatRing Ring => _ring;
         public WaveFormat WaveFormat { get; }
-        public WasapiLoopbackCapture? Capture { get; set; }
+        public WasapiCapture? Capture { get; set; }
         public WasapiOut? Output { get; set; }
         public float Peak { get; private set; }
         public float Volume => _config.Channel(Channel).Volume;
