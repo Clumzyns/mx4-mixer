@@ -25,6 +25,7 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
@@ -107,7 +108,20 @@
       </Grid>
     </Border>
 
-    <ScrollViewer x:Name="ColumnScroll" Grid.Row="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
+    <Border Grid.Row="2" Margin="16,0,16,8" Padding="12,8" Background="#2A2414" BorderBrush="#FFC56A" BorderThickness="1" CornerRadius="12"
+            Visibility="{Binding ShowSonarWarning, Converter={StaticResource BoolVis}}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="{Binding SonarWarning}" TextWrapping="Wrap" Foreground="#FFC56A" VerticalAlignment="Center"/>
+        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="Close SteelSeries" Margin="12,0,0,0"
+                Command="{Binding CloseSonarCommand}"/>
+      </Grid>
+    </Border>
+
+    <ScrollViewer x:Name="ColumnScroll" Grid.Row="3" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
       <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="1120">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
@@ -235,7 +249,7 @@
       </ItemsControl>
     </ScrollViewer>
 
-    <Grid Grid.Row="3" Margin="20,6,20,10">
+    <Grid Grid.Row="4" Margin="20,6,20,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
@@ -257,7 +271,7 @@
       <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
     </Grid>
 
-    <Border Grid.RowSpan="4" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
+    <Border Grid.RowSpan="5" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
       <Border HorizontalAlignment="Right" Width="380" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
         <StackPanel Margin="24">
           <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
@@ -274,7 +288,7 @@
       </Border>
     </Border>
 
-    <Border Grid.Row="2" Margin="16" Background="#E614181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16" Padding="24"
+    <Border Grid.Row="3" Margin="16" Background="#E614181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16" Padding="24"
             Visibility="{Binding NoOutputs, Converter={StaticResource BoolVis}}" IsHitTestVisible="False">
       <TextBlock Text="No playback devices found. Plug in your IEMs and Mixer will list them here." FontSize="16" TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center"/>
     </Border>

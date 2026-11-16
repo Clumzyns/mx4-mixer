@@ -37,6 +37,9 @@ public sealed class MixerSnapshot
     public IReadOnlyList<AppSnapshot> Apps { get; init; } = [];
     public string Status { get; init; } = "";
     public bool RoutingAvailable { get; init; }
+    public bool VirtualMixActive { get; init; }
+    public string SonarWarning { get; init; } = "";
+    public string BackendName { get; init; } = "";
 }
 
 public sealed class PeakUpdate

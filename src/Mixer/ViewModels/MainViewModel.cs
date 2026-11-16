@@ -27,6 +27,8 @@ public sealed class MainViewModel : ObservableObject
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
     private string _chatMixDetail = "Looking for the Nova Pro base station…";
+    private string _sonarWarning = "";
+    private bool _virtualMixActive;
 
     public MainViewModel(AudioEngine engine, MixerConfig config, ChatMixMonitor chatMix)
     {
@@ -44,6 +46,7 @@ public sealed class MainViewModel : ObservableObject
         ToggleMicCommand = new RelayCommand(() => MicMuted = !MicMuted);
         ToggleSettingsCommand = new RelayCommand(() => SettingsOpen = !SettingsOpen);
         OpenConfigCommand = new RelayCommand(OpenConfigFolder);
+        CloseSonarCommand = new RelayCommand(() => _engine.CloseSteelSeries());
         _engine.StructureChanged += (_, snap) => Apply(snap);
         _engine.PeaksChanged += (_, peaks) => ApplyPeaks(peaks);
     }
@@ -55,6 +58,10 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ToggleMicCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
     public RelayCommand OpenConfigCommand { get; }
+    public RelayCommand CloseSonarCommand { get; }
+    public string SonarWarning => _sonarWarning;
+    public bool ShowSonarWarning => !string.IsNullOrWhiteSpace(_sonarWarning);
+    public bool VirtualMixActive => _virtualMixActive;
     public bool IsSyncing => _syncing > 0;
     public string VersionText => "Version " + AppInfo.Version;
     public string ConfigPath => ConfigStore.FilePath;
@@ -194,13 +201,18 @@ public sealed class MainViewModel : ObservableObject
             channel.Syncing = true;
         try
         {
-            RebuildOutputs(snap.Outputs, snap.Channels.Select(channel => channel.DeviceId));
+            RebuildOutputs(snap.Outputs, snap.Channels.Select(channel => channel.DeviceId), snap.VirtualMixActive);
             RebuildInputs(snap.Inputs);
             SelectedOutputId = snap.MasterOutputId;
             SelectedInputId = snap.MasterInputId;
             MicMuted = snap.MicMuted;
             Status = snap.Status;
             RoutingAvailable = snap.RoutingAvailable;
+            _sonarWarning = snap.SonarWarning;
+            _virtualMixActive = snap.VirtualMixActive;
+            Raise(nameof(SonarWarning));
+            Raise(nameof(ShowSonarWarning));
+            Raise(nameof(VirtualMixActive));
             Raise(nameof(NoOutputs));
 
             foreach (var channelSnap in snap.Channels)
@@ -264,9 +276,9 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private void RebuildOutputs(IReadOnlyList<DeviceSnapshot> devices, IEnumerable<string?> selectedIds)
+    private void RebuildOutputs(IReadOnlyList<DeviceSnapshot> devices, IEnumerable<string?> selectedIds, bool virtualMix)
     {
-        var items = new List<DeviceOption> { new() { Id = "", Name = "Default" } };
+        var items = new List<DeviceOption> { new() { Id = "", Name = virtualMix ? "Master mix" : "Default" } };
         foreach (var device in devices)
             items.Add(new DeviceOption { Id = device.Id, Name = device.Name });
         foreach (var id in selectedIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase))

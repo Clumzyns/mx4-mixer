@@ -37,6 +37,13 @@ public sealed class AudioEngine : IDisposable
     private int _scanDepth;
     private bool _scanAgain;
     private bool _disposed;
+    private readonly Dictionary<ChannelId, string> _virtualInputs = new();
+    private VirtualMixGraph? _mix;
+    private string _mixSignature = "";
+    private bool _virtualMixActive;
+    private bool _sonarMicrophone;
+    private string _sonarWarning = "";
+    private string _backendName = "";
 
     public AudioEngine(MixerConfig config)
     {
@@ -177,6 +184,16 @@ public sealed class AudioEngine : IDisposable
         ScheduleSave();
     }
 
+    public int CloseSteelSeries()
+    {
+        var closed = SteelSeriesApps.Close();
+        _sonarWarning = closed > 0
+            ? $"Closed {closed} SteelSeries process{(closed == 1 ? "" : "es")}."
+            : "No SteelSeries process was running.";
+        RequestScan();
+        return closed;
+    }
+
     public void SetAppMuted(string exeKey, bool muted)
     {
         if (string.IsNullOrWhiteSpace(exeKey)) return;
@@ -192,6 +209,7 @@ public sealed class AudioEngine : IDisposable
         _meterTimer.Stop();
         _scanTimer.Stop();
         _saveTimer.Stop();
+        StopMix();
         try { ConfigStore.Save(_config); } catch { /* exit path */ }
         try { _enumerator.UnregisterEndpointNotificationCallback(_notifications); } catch { /* already gone */ }
         DisposeDevices(_render);
@@ -277,6 +295,8 @@ public sealed class AudioEngine : IDisposable
         try
         {
             RefreshDevices();
+            DiscoverVirtualInputs();
+            UpdateMix();
             _live = CollectSessions();
             ApplyGains();
             RouteAll();
@@ -391,10 +411,11 @@ public sealed class AudioEngine : IDisposable
                 _memory[session.InstanceId] = memory;
             }
 
+            var scale = _virtualMixActive ? 1f : settings.Volume;
             var external = memory.HasWritten && Math.Abs(current - memory.LastVolume) > 0.02f;
-            if (external && settings.Volume > 0.001f)
+            if (external && scale > 0.001f)
             {
-                baseVolume = VolumeMath.BaseFromEffective(current, settings.Volume);
+                baseVolume = VolumeMath.BaseFromEffective(current, scale);
                 _config.BaseVolumes[session.ExeKey] = baseVolume;
                 memory.LastVolume = current;
                 memory.HasWritten = true;
@@ -402,7 +423,7 @@ public sealed class AudioEngine : IDisposable
             }
             else
             {
-                var desired = VolumeMath.Effective(_config.BaseVolumes[session.ExeKey], settings.Volume);
+                var desired = VolumeMath.Effective(_config.BaseVolumes[session.ExeKey], scale);
                 if (Math.Abs(current - desired) > 0.01f)
                 {
                     volume.Volume = desired;
@@ -416,7 +437,7 @@ public sealed class AudioEngine : IDisposable
             }
 
             var appMuted = _config.AppMuted.TryGetValue(session.ExeKey, out var muted) && muted;
-            var wantMute = settings.Muted || appMuted;
+            var wantMute = _virtualMixActive ? appMuted : settings.Muted || appMuted;
             if (volume.Mute != wantMute)
                 volume.Mute = wantMute;
         }
@@ -448,7 +469,10 @@ public sealed class AudioEngine : IDisposable
 
     private string? DesiredDevice(string exeKey)
     {
-        var id = _config.Channel(Resolve(exeKey)).DeviceId;
+        var channel = Resolve(exeKey);
+        if (_virtualInputs.TryGetValue(channel, out var virtualId))
+            return virtualId;
+        var id = _config.Channel(channel).DeviceId;
         return string.IsNullOrWhiteSpace(id) ? null : id;
     }
 
@@ -503,6 +527,7 @@ public sealed class AudioEngine : IDisposable
         }
 
         Array.Clear(_channelShown);
+        _mix?.CopyPeaks(_channelShown);
         foreach (var pair in _appShown)
         {
             var index = (int)Resolve(pair.Key);
@@ -666,7 +691,10 @@ public sealed class AudioEngine : IDisposable
             Channels = channels,
             Apps = apps,
             Status = _status,
-            RoutingAvailable = _router != null
+            RoutingAvailable = _router != null,
+            VirtualMixActive = _virtualMixActive,
+            SonarWarning = _sonarWarning,
+            BackendName = _backendName
         });
     }
 
@@ -727,13 +755,79 @@ public sealed class AudioEngine : IDisposable
     {
         if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
         if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase)) return true;
-        return Tail(left).Equals(Tail(right), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(EndpointIds.Key(left), EndpointIds.Key(right), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Tail(string id)
+    private void DiscoverVirtualInputs()
     {
-        var index = id.LastIndexOf('{');
-        return index >= 0 ? id[index..] : id;
+        _virtualInputs.Clear();
+        _sonarMicrophone = false;
+        _backendName = "";
+        foreach (var device in _render.Values)
+        {
+            var name = DeviceSnap(device).Name;
+            if (!VirtualBackends.TryMap(name, out var channel, out var backend)) continue;
+            _virtualInputs[channel] = device.ID;
+            _backendName = backend;
+        }
+
+        foreach (var device in _capture.Values)
+        {
+            if (VirtualBackends.IsSonarMicrophone(DeviceSnap(device).Name))
+                _sonarMicrophone = true;
+        }
+
+        var gg = SteelSeriesApps.Running();
+        if (gg.Count > 0)
+            _sonarWarning = "SteelSeries is running (" + string.Join(", ", gg.Distinct(StringComparer.OrdinalIgnoreCase)) + "). It will grab the dial and mix on top of Mixer.";
+        else if (_virtualInputs.Count == 0)
+            _sonarWarning = "Sonar virtual devices were not found. Install SteelSeries Sonar once, then quit GG. Mixer will use SteelSeries Sonar - Gaming, Chat, Media, and Aux.";
+        else if (_masterOutputId != null && _virtualInputs.Values.Any(id => SameDevice(id, _masterOutputId)))
+            _sonarWarning = "The master output is a Sonar device. Choose your IEM DAC, for example Fosi Audio K5 Pro.";
+        else
+        {
+            _sonarWarning = "";
+            _status = "Mixing " + _backendName + " into the master output."
+                + (_sonarMicrophone ? " Sonar microphone is present." : "");
+        }
+    }
+
+    private void UpdateMix()
+    {
+        var masterIsVirtual = _masterOutputId != null && _virtualInputs.Values.Any(id => SameDevice(id, _masterOutputId));
+        var canMix = _virtualInputs.Count > 0 && _masterOutputId != null && !masterIsVirtual && _render.ContainsKey(_masterOutputId);
+        var signature = canMix
+            ? _backendName + "|" + _masterOutputId + "|" + string.Join(",", _virtualInputs.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value))
+              + "|" + string.Join(",", ChannelIds.All.Select(id => id + ":" + (_config.Channel(id).DeviceId ?? "")))
+            : "";
+        _virtualMixActive = canMix;
+        if (signature == _mixSignature) return;
+        StopMix();
+        _mixSignature = signature;
+        if (!canMix) return;
+        var sources = new Dictionary<ChannelId, MMDevice>();
+        foreach (var (channel, id) in _virtualInputs)
+        {
+            if (_render.TryGetValue(id, out var device))
+                sources[channel] = device;
+        }
+        _mix = VirtualMixGraph.TryStart(_render[_masterOutputId!], sources, _config, _render);
+        if (_mix == null)
+        {
+            _virtualMixActive = false;
+            _sonarWarning = "Couldn't start the mix to the master output.";
+        }
+        else
+        {
+            Log.Info("Mixing " + _backendName + " channels to " + _masterOutputId);
+        }
+    }
+
+    private void StopMix()
+    {
+        try { _mix?.Dispose(); } catch { /* already stopped */ }
+        _mix = null;
+        _mixSignature = "";
     }
 
     private sealed class LiveSession

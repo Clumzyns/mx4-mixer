@@ -192,18 +192,29 @@ internal sealed class AppEndpointRouter : IDisposable
     public bool SetEndpoint(uint processId, string? deviceId)
     {
         if (_factory == IntPtr.Zero || processId == 0) return false;
-        var handle = HString.Create(deviceId);
+        // EarTrumpet passes the full device-interface path. The bare MMDevice id
+        // ({0.0.0.00000000}.{guid}) is rejected with E_INVALIDARG (0x80070057).
+        var policyId = EndpointIds.ToPolicyPath(deviceId);
+        var handle = HString.Create(policyId);
         try
         {
             var set = ReadSlot<SetEndpointDelegate>(_factory, SetSlot);
-            var multimediaOk = false;
-            foreach (uint role in new uint[] { 0, 1, 2 })
+            var anyOk = false;
+            // eConsole = 0, eMultimedia = 1. eCommunications is rejected on this API.
+            foreach (uint role in new uint[] { 0, 1 })
             {
                 var hr = set(_factory, processId, 0, role, handle);
-                if (role == 1) multimediaOk = hr >= 0;
-                if (hr < 0) LogFailure(processId, deviceId, role, hr);
+                if (hr >= 0)
+                {
+                    anyOk = true;
+                    LogOnce(processId, policyId, role, hr, success: true);
+                }
+                else
+                {
+                    LogOnce(processId, policyId, role, hr, success: false);
+                }
             }
-            return multimediaOk;
+            return anyOk;
         }
         catch (Exception ex)
         {
@@ -240,13 +251,17 @@ internal sealed class AppEndpointRouter : IDisposable
         _factory = IntPtr.Zero;
     }
 
-    private void LogFailure(uint processId, string? deviceId, uint role, int hr)
+    private void LogOnce(uint processId, string? deviceId, uint role, int hr, bool success)
     {
-        var key = processId + "|" + (deviceId ?? "default") + "|" + role + "|" + hr.ToString("X8");
+        var key = processId + "|" + (deviceId ?? "default") + "|" + role + "|" + (success ? "ok" : hr.ToString("X8"));
         var count = _logged.TryGetValue(key, out var seen) ? seen + 1 : 1;
         _logged[key] = count;
-        if (count <= 2)
-            Services.Log.Info($"SetPersistedDefaultAudioEndpoint pid {processId} role {role} -> 0x{hr:X8} ({deviceId ?? "default"})");
+        if (count > 2) return;
+        var label = deviceId ?? "default";
+        if (success)
+            Services.Log.Info($"SetPersistedDefaultAudioEndpoint pid {processId} role {role} ok ({label})");
+        else
+            Services.Log.Info($"SetPersistedDefaultAudioEndpoint pid {processId} role {role} -> 0x{hr:X8} ({label})");
     }
 
     private static IEnumerable<Guid> IidOrder()
@@ -264,5 +279,33 @@ internal sealed class AppEndpointRouter : IDisposable
         var vtable = Marshal.ReadIntPtr(instance);
         var method = Marshal.ReadIntPtr(vtable, slot * IntPtr.Size);
         return Marshal.GetDelegateForFunctionPointer<T>(method);
+    }
+}
+
+/// <summary>
+/// Builds the device-interface HSTRING EarTrumpet passes to SetPersistedDefaultAudioEndpoint.
+/// A null id becomes a null HSTRING, which clears the per-app endpoint.
+/// </summary>
+internal static class EndpointIds
+{
+    private const string RenderInterface = "{e6327cad-dcec-4949-ae8a-991e976a79d2}";
+
+    public static string? ToPolicyPath(string? deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId)) return null;
+        if (deviceId.Contains("SWD#MMDEVAPI", StringComparison.OrdinalIgnoreCase))
+            return deviceId;
+        return $@"\\?\SWD#MMDEVAPI#{deviceId}#{RenderInterface}";
+    }
+
+    public static string Key(string id)
+    {
+        var marker = id.IndexOf("{0.0.", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0) return id;
+        var first = id.IndexOf('}', marker);
+        if (first < 0) return id[marker..];
+        var second = id.IndexOf('}', first + 1);
+        if (second < 0) return id[marker..];
+        return id[marker..(second + 1)];
     }
 }
