@@ -19,6 +19,17 @@ public static class VolumeMath
         return Clamp(value);
     }
 
+    /// <summary>
+    /// Slider position to amplitude. Full scale is 0 dB. Zero is exact silence.
+    /// </summary>
+    public static float FaderGain(float position)
+    {
+        position = Clamp(position);
+        if (position <= 0f) return 0f;
+        var db = (position - 1.0) * 60.0;
+        return (float)Math.Pow(10.0, db / 20.0);
+    }
+
     public static float Effective(float baseVolume, float channelVolume)
         => Clamp(Clamp(baseVolume) * Clamp(channelVolume));
 

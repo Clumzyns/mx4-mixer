@@ -50,15 +50,18 @@ internal sealed class LiveMix
         Volatile.Write(ref _softwareMute[(int)id], software ? 1 : 0);
 
     /// <summary>
-    /// Gain applied inside the mix. The cable fader is omitted when the render endpoint owns it.
+    /// Gain inside the mix. The fader is a dB curve that is exact silence at zero,
+    /// even when the cable endpoint does not mute at scalar 0.
     /// </summary>
     public float MixGain(ChannelId id)
     {
         var index = (int)id;
-        var fader = Volatile.Read(ref _softwareFader[index]) != 0 ? Volatile.Read(ref _fader[index]) : 1f;
+        if (Volatile.Read(ref _muted[index]) != 0) return 0f;
+        var fader = VolumeMath.FaderGain(Volatile.Read(ref _fader[index]));
+        if (fader <= 0f) return 0f;
         var chat = Volatile.Read(ref _chatMix[index]);
-        var mute = Volatile.Read(ref _softwareMute[index]) != 0 && Volatile.Read(ref _muted[index]) != 0 ? 0f : 1f;
-        return VolumeMath.Clamp(fader) * VolumeMath.Clamp(chat) * mute;
+        if (chat <= 0f) return 0f;
+        return VolumeMath.Clamp(fader * chat);
     }
 
     public float Master => Volatile.Read(ref _master);

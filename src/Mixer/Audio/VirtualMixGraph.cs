@@ -102,7 +102,14 @@ internal sealed class VirtualMixGraph : IDisposable
             renderFail += pump.TakeFailures();
             renderShort += pump.TakeShort();
         }
-        Log.Info($"Mix health clips={clips} renderFail={renderFail} renderShort={renderShort} bypass={_bypass} period={_periodMs}ms");
+        var minPadding = -1;
+        foreach (var pump in _pumps)
+        {
+            if (pump.Capture) continue;
+            var padding = pump.TakeMinPadding();
+            if (padding >= 0) minPadding = padding;
+        }
+        Log.Info($"Mix health clips={clips} renderFail={renderFail} renderShort={renderShort} minPadding={minPadding} bypass={_bypass} period={_periodMs}ms");
         foreach (var (channel, tap) in _taps)
         {
             var (underrun, insert, overrun, buffered) = tap.TakeDrift();
@@ -110,7 +117,7 @@ internal sealed class VirtualMixGraph : IDisposable
             var disc = pump?.TakeDiscontinuity() ?? 0;
             var silent = pump?.TakeSilent() ?? 0;
             var fail = pump?.TakeFailures() ?? 0;
-            Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered} discontinuity={disc} silent={silent} captureFail={fail}");
+            Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered} peak={tap.Peak:0.000} discontinuity={disc} silent={silent} captureFail={fail}");
         }
     }
 
@@ -144,7 +151,7 @@ internal sealed class VirtualMixGraph : IDisposable
         var flags = AudioClientStreamFlags.EventCallback
             | AudioClientStreamFlags.AutoConvertPcm
             | AudioClientStreamFlags.SrcDefaultQuality;
-        var hns = _periodMs * 10_000L;
+        var hns = _periodMs * (capture ? 1 : 2) * 10_000L;
         WaveFormat stream = wanted;
         try
         {
@@ -180,10 +187,24 @@ internal sealed class VirtualMixGraph : IDisposable
         return pump;
     }
 
+    private void PrimeRender(OpenedClient opened, AudioRenderClient render)
+    {
+        var periodFrames = Math.Max(1, opened.SampleRate * _periodMs / 1000);
+        var prime = Math.Min(opened.Client.BufferSize, periodFrames * 2);
+        if (prime <= 0) return;
+        var data = render.GetBuffer(prime);
+        var bytes = prime * Math.Max(opened.Stream.BlockAlign, 1);
+        var silence = new byte[bytes];
+        Marshal.Copy(silence, 0, data, bytes);
+        render.ReleaseBuffer(prime, AudioClientBufferFlags.Silent);
+        Log.Info($"Mix render primed {prime} frames, buffer={opened.Client.BufferSize}, period={periodFrames}");
+    }
+
     private WasapiPump StartRender(OpenedClient opened)
     {
         var pump = new WasapiPump(null, opened, capture: false);
         var render = opened.Client.AudioRenderClient;
+        PrimeRender(opened, render);
         opened.Client.Start();
         pump.Thread = new Thread(() => RenderLoop(pump, opened, render))
         {
@@ -245,6 +266,7 @@ internal sealed class VirtualMixGraph : IDisposable
             try
             {
                 var padding = opened.Client.CurrentPadding;
+                pump.NotePadding(padding);
                 var frames = opened.Client.BufferSize - padding;
                 if (frames <= 0)
                 {
@@ -445,6 +467,7 @@ internal sealed class VirtualMixGraph : IDisposable
         public int Silent;
         public int Failures;
         public int Short;
+        private int _minPadding = int.MaxValue;
         public float[] Scratch = new float[2048];
         public byte[] Bytes = new byte[4096];
 
@@ -452,6 +475,23 @@ internal sealed class VirtualMixGraph : IDisposable
         public int TakeSilent() => Interlocked.Exchange(ref Silent, 0);
         public int TakeFailures() => Interlocked.Exchange(ref Failures, 0);
         public int TakeShort() => Interlocked.Exchange(ref Short, 0);
+
+        public void NotePadding(int padding)
+        {
+            int seen;
+            do
+            {
+                seen = _minPadding;
+                if (padding >= seen) return;
+            }
+            while (Interlocked.CompareExchange(ref _minPadding, padding, seen) != seen);
+        }
+
+        public int TakeMinPadding()
+        {
+            var value = Interlocked.Exchange(ref _minPadding, int.MaxValue);
+            return value == int.MaxValue ? -1 : value;
+        }
 
         public void Dispose()
         {

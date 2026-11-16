@@ -29,6 +29,7 @@ public sealed class AudioEngine : IDisposable
     private readonly Dictionary<uint, ProcessInfo> _procs = new();
     private readonly Dictionary<string, SessionMemory> _memory = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, string> _routed = new();
+    private readonly HashSet<string> _sessionHooks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, float> _appShown = new(StringComparer.OrdinalIgnoreCase);
     private readonly float[] _channelShown = new float[5];
     private PeakUpdate? _pendingPeaks;
@@ -286,7 +287,9 @@ public sealed class AudioEngine : IDisposable
         var next = VolumeMath.Clamp(volume);
         _gains.SetFader(id, next);
         _config.Channel(id).Volume = next;
-        _gains.SetSoftwareFader(id, !_cableVolume.TrySetVolume(id, next));
+        var silent = next <= 0f || _config.Channel(id).Muted;
+        _cableVolume.TrySetVolume(id, silent ? 0f : 1f);
+        _cableVolume.TrySetMute(id, silent);
         if (!_virtualMixActive) QueueGain();
         ScheduleSave();
     }
@@ -316,7 +319,9 @@ public sealed class AudioEngine : IDisposable
     {
         _gains.SetMuted(id, muted);
         _config.Channel(id).Muted = muted;
-        _gains.SetSoftwareMute(id, !_cableVolume.TrySetMute(id, muted));
+        var silent = muted || _config.Channel(id).Volume <= 0f;
+        _cableVolume.TrySetMute(id, silent);
+        if (!silent) _cableVolume.TrySetVolume(id, 1f);
         if (!_virtualMixActive) QueueGain();
         ScheduleSave();
     }
@@ -665,21 +670,71 @@ public sealed class AudioEngine : IDisposable
     private void RouteAll()
     {
         if (_router == null) return;
-        var seen = new HashSet<uint>();
-        foreach (var session in _live)
+        var tree = ProcessPath.Snapshot();
+        var targets = new Dictionary<uint, string>();
+        void Claim(uint pid, string exeKey)
         {
-            if (session.Pid == 0 || session.ExeKey == "system.sounds" || !seen.Add(session.Pid))
-                continue;
-            var desired = DesiredDevice(session.ExeKey);
-            var key = desired ?? "";
-            if (_routed.TryGetValue(session.Pid, out var previous) && string.Equals(previous, key, StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!_router.SetEndpoint(session.Pid, desired))
-                continue;
-            var actual = _router.TryGetEndpoint(session.Pid);
-            if (actual == null || EndpointMatches(actual, desired))
-                _routed[session.Pid] = key;
+            if (pid == 0 || pid == (uint)Environment.ProcessId) return;
+            if (string.Equals(exeKey, "system.sounds", StringComparison.OrdinalIgnoreCase)) return;
+            var device = DesiredDevice(exeKey) ?? "";
+            if (!targets.ContainsKey(pid))
+                targets[pid] = exeKey + "\n" + device;
+            foreach (var child in ProcessPath.Descendants(pid, tree))
+            {
+                if (child == 0 || child == (uint)Environment.ProcessId) continue;
+                if (!targets.ContainsKey(child))
+                    targets[child] = exeKey + "\n" + device;
+            }
         }
+
+        foreach (var session in _live)
+            Claim(session.Pid, session.ExeKey);
+        foreach (var node in tree)
+        {
+            if (_config.Assignments.ContainsKey(node.ExeKey) || DefaultApps.Map.ContainsKey(node.ExeKey))
+                Claim(node.Pid, node.ExeKey);
+        }
+
+        foreach (var (pid, packed) in targets)
+        {
+            var split = packed.Split('\n');
+            var exe = split[0];
+            var device = split.Length > 1 && split[1].Length > 0 ? split[1] : null;
+            var key = device ?? "";
+            if (_routed.TryGetValue(pid, out var previous) && string.Equals(previous, key, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!_router.SetEndpoint(pid, device))
+                continue;
+            var actual = _router.TryGetEndpoint(pid);
+            if (actual != null && !EndpointMatches(actual, device))
+                continue;
+            _routed[pid] = key;
+            Log.Info($"Routed {exe} pid {pid} to {Resolve(exe)}");
+        }
+    }
+
+    private void WatchSessions(MMDevice device)
+    {
+        if (!_sessionHooks.Add(device.ID)) return;
+        try
+        {
+            device.AudioSessionManager.OnSessionCreated += OnSessionCreated;
+        }
+        catch (Exception ex)
+        {
+            _sessionHooks.Remove(device.ID);
+            Log.Error("Session notifications unavailable for " + device.ID, ex);
+        }
+    }
+
+    private void OnSessionCreated(object sender, IAudioSessionControl session) => Post(RefreshRoutes);
+
+    private void RefreshRoutes()
+    {
+        _live = CollectSessions();
+        ApplyGains();
+        RouteAll();
+        Notify();
     }
 
     private string? DesiredDevice(string exeKey)
@@ -840,16 +895,21 @@ public sealed class AudioEngine : IDisposable
             if (map.ContainsKey(id))
             {
                 try { device.Dispose(); } catch { /* duplicate wrapper */ }
+                if (flow == DataFlow.Render)
+                    WatchSessions(map[id]);
             }
             else
             {
                 map[id] = device;
+                if (flow == DataFlow.Render)
+                    WatchSessions(device);
             }
         }
 
         foreach (var id in map.Keys.Where(key => !seen.Contains(key)).ToList())
         {
             _cableVolume.Release(id);
+            _sessionHooks.Remove(id);
             try { map[id].Dispose(); } catch { /* already dead */ }
             map.Remove(id);
         }
