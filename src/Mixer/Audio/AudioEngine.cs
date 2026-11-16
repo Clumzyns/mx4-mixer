@@ -700,18 +700,24 @@ public sealed class AudioEngine : IDisposable
             var split = packed.Split('\n');
             var exe = split[0];
             var device = split.Length > 1 && split[1].Length > 0 ? split[1] : null;
-            var key = device ?? "";
+            var key = RouteKey(device);
             if (_routed.TryGetValue(pid, out var previous) && string.Equals(previous, key, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (!_router.SetEndpoint(pid, device))
+            var persisted = _router.TryGetEndpoint(pid);
+            if (EndpointMatches(persisted, device))
+            {
+                _routed[pid] = key;
                 continue;
-            var actual = _router.TryGetEndpoint(pid);
-            if (actual != null && !EndpointMatches(actual, device))
+            }
+            if (!_router.SetEndpoint(pid, device))
                 continue;
             _routed[pid] = key;
             Log.Info($"Routed {exe} pid {pid} to {Resolve(exe)}");
         }
     }
+
+    private static string RouteKey(string? device) =>
+        string.IsNullOrEmpty(device) ? "" : EndpointIds.Key(device);
 
     private void WatchSessions(MMDevice device)
     {
@@ -749,7 +755,7 @@ public sealed class AudioEngine : IDisposable
         return string.IsNullOrWhiteSpace(id) ? null : id;
     }
 
-    private bool EndpointMatches(string actual, string? desired)
+    private bool EndpointMatches(string? actual, string? desired)
     {
         if (string.IsNullOrEmpty(desired))
             return string.IsNullOrEmpty(actual) || SameDevice(actual, _masterOutputId);
@@ -1029,7 +1035,10 @@ public sealed class AudioEngine : IDisposable
         var pids = new HashSet<uint>(_live.Select(session => session.Pid));
         foreach (var pid in _procs.Keys.Where(pid => !pids.Contains(pid)).ToList())
             _procs.Remove(pid);
-        foreach (var pid in _routed.Keys.Where(pid => !pids.Contains(pid)).ToList())
+        var alive = new HashSet<uint>(ProcessPath.Snapshot().Select(node => node.Pid));
+        foreach (var pid in pids)
+            alive.Add(pid);
+        foreach (var pid in _routed.Keys.Where(pid => !alive.Contains(pid)).ToList())
             _routed.Remove(pid);
     }
 
@@ -1156,6 +1165,7 @@ public sealed class AudioEngine : IDisposable
             {
                 _config.CableAssignments[key] = cable.RenderId;
                 changed = true;
+                _routed.Clear();
                 report.AppendLine($"Channel {channel} remapped to Line {cable.Order} render={cable.RenderId}");
             }
             if (!string.IsNullOrWhiteSpace(cable.CaptureId) &&
@@ -1182,10 +1192,7 @@ public sealed class AudioEngine : IDisposable
             if (text.Length > 0) Log.Info(text);
         }
         if (changed)
-        {
-            _routed.Clear();
             ScheduleSave();
-        }
     }
 
     private void ApplyWindowsDefaults()
