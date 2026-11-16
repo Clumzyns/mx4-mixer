@@ -123,7 +123,26 @@
       </Grid>
     </Border>
 
-    <ScrollViewer x:Name="ColumnScroll" Grid.Row="3" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
+    <Grid Grid.Row="3">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="92"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Border Margin="10,0,0,0" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16">
+        <Grid Margin="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock Text="MASTER" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <controls:Fader Grid.Row="1" Margin="0,8" Value="{Binding MasterVolume, Mode=TwoWay}"
+                          ToolTip="Master output volume. Knob position 0 is full and 56 is silent. Drag up for louder."/>
+          <TextBlock Grid.Row="2" Text="{Binding MasterVolumeLabel, Mode=OneWay}" FontSize="18" FontWeight="SemiBold"
+                     HorizontalAlignment="Center" Foreground="{StaticResource AccentBrush}"/>
+        </Grid>
+      </Border>
+      <ScrollViewer x:Name="ColumnScroll" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
       <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="1120">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
@@ -250,6 +269,7 @@
         </ItemsControl.ItemTemplate>
       </ItemsControl>
     </ScrollViewer>
+    </Grid>
 
     <Border Grid.Row="4" Margin="16,0,16,8" Padding="14,10" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="12">
       <Grid>
@@ -284,19 +304,10 @@
     <Grid Grid.Row="5" Margin="20,6,20,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-        <TextBlock Text="MASTER" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <controls:Fader Width="160" Height="22" Orientation="Horizontal" VerticalAlignment="Center"
-                        Value="{Binding MasterVolume, Mode=TwoWay}"
-                        ToolTip="Master output volume. The base station knob changes this by 2% per step."/>
-        <TextBlock Text="{Binding MasterVolumeLabel, Mode=OneWay}" Width="36" Margin="8,0,0,0" VerticalAlignment="Center"
-                   FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" TextAlignment="Right"/>
-      </StackPanel>
-      <Ellipse Grid.Column="1" Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,8,0">
+      <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,8,0">
         <Ellipse.Style>
           <Style TargetType="Ellipse">
             <Setter Property="Fill" Value="#5C6573"/>
@@ -308,8 +319,8 @@
           </Style>
         </Ellipse.Style>
       </Ellipse>
-      <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,12,0"/>
-      <TextBlock Grid.Column="3" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
+      <TextBlock Grid.Column="1" Text="{Binding Status}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,12,0"/>
+      <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
     </Grid>
 
     <Border Grid.RowSpan="6" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
@@ -321,9 +332,9 @@
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
           <CheckBox Content="Invert knob" IsChecked="{Binding InvertVolumeKnob}"
-                    ToolTip="The base station volume knob sends 07 25. Each step changes master volume by 2%. Turn this on if turning the knob up makes the master quieter."/>
+                    ToolTip="By default knob position 0 is full volume and 56 is silent. Turn this on to swap that."/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
-                     Text="The base station knob controls master volume. A higher report is louder, 2% per step, clamped from 0 to 100. The first report after connect is ignored. ChatMix stays on 07 45."/>
+                     Text="The base station knob is attenuation: position 0 is full master volume and 56 is silent. A higher position than 56 extends the scale. ChatMix reports move Game and Chat as they arrive."/>
           <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12"
                      Text="Install Virtual Audio Cable, open its control panel, and set the cable count to 4. Apps play into each line. Mixer records that line and sends the mix to the master output."/>

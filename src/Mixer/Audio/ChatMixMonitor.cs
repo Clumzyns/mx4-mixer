@@ -9,8 +9,8 @@ namespace Mixer.Audio;
 /// Wired GameDAC (PID 0x12CB/0x12CD) accepts init on MI_04 COL01 (usage page 0xFFC0):
 /// 06 10, 06 20, 06 80, 06 18, 06 49 01, 06 8D 01. COL02 (usage page 0xFF00) is input-only.
 /// ChatMix, once enabled with 06 49 01, is report 07 45 GG CC (game %, chat %).
-/// The wired volume knob is a separate report, 07 25 NN. Each step nudges master volume.
-/// The first 07 25 after connect is only a baseline.
+/// The wired volume knob is 07 25 NN. NN is attenuation (0 full, 56 silent) and is applied immediately.
+/// ChatMix 07 45 GG CC is applied on the report, not on a later mode change.
 /// Both MI_04 collections are read at the same time.
 /// </summary>
 public sealed class ChatMixMonitor : IDisposable
@@ -41,8 +41,9 @@ public sealed class ChatMixMonitor : IDisposable
     private readonly Dictionary<string, string> _unknownHex = new(StringComparer.Ordinal);
     private bool _enabled = true;
     private bool _disposed;
-    private bool _knobReady;
     private bool _statusConnected;
+    private string _summary = "";
+    private int _summaryQueued;
     private string _statusDetail = "";
     private int _lastGame = -1;
     private int _lastChat = -1;
@@ -133,10 +134,7 @@ public sealed class ChatMixMonitor : IDisposable
     private void Pump(List<HidDevice> devices)
     {
         lock (_gate)
-        {
-            _knobReady = false;
             _lastKnob = -1;
-        }
 
         var running = 1;
         var streams = new List<(HidDevice Device, HidStream Stream, bool Wrote)>();
@@ -263,7 +261,7 @@ public sealed class ChatMixMonitor : IDisposable
             lock (_gate)
                 update = Interpret(snapshot, tag, out log);
             if (log != null)
-                Log.Info(log);
+                Note(log);
             if (update is ChatMixReading reading)
                 Reading?.Invoke(this, reading);
         }
@@ -295,26 +293,14 @@ public sealed class ChatMixMonitor : IDisposable
 
         if (kind == ChatMixReportKind.Knob)
         {
-            if (!_knobReady)
-            {
-                _knobReady = true;
-                _lastKnob = knob;
-                _lastRaw = raw;
-                log = $"ChatMix volume knob baseline 07 25 value={knob} (ignored) ({raw})";
-                return new ChatMixReading(true, false, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, 0, true,
-                    $"Volume knob baseline {knob}.", raw);
-            }
-
-            var delta = knob - _lastKnob;
-            if (_lastRaw == raw && delta == 0) return null;
+            if (_lastRaw == raw && knob == _lastKnob) return null;
+            var changed = knob != _lastKnob;
             _lastKnob = knob;
             _lastRaw = raw;
-            if (delta != 0)
-                log = $"ChatMix volume knob 07 25 value={knob} delta={delta.ToString("+#;-#;0")} ({raw})";
-            var detail = delta == 0
-                ? $"Volume knob {knob}."
-                : $"Volume knob {knob} delta {delta.ToString("+#;-#;0")}.";
-            return new ChatMixReading(true, false, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, delta, false, detail, raw);
+            if (changed)
+                log = $"Volume knob 07 25 position={knob} ({raw})";
+            return new ChatMixReading(true, false, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, 0, false,
+                $"Volume knob {knob}.", raw);
         }
 
         var id = buffer.Length > 0 ? buffer[0] : (byte)0;
@@ -492,6 +478,19 @@ public sealed class ChatMixMonitor : IDisposable
             text.Append(buffer[i].ToString("X2"));
         }
         return text.ToString();
+    }
+
+    private void Note(string line)
+    {
+        Volatile.Write(ref _summary, line);
+        if (Interlocked.CompareExchange(ref _summaryQueued, 1, 0) != 0) return;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            Thread.Sleep(500);
+            var text = Volatile.Read(ref _summary);
+            Interlocked.Exchange(ref _summaryQueued, 0);
+            if (!string.IsNullOrEmpty(text)) Log.Info(text);
+        });
     }
 
     private void Publish(bool connected, bool hasLevels, ChatMixReportKind kind, int game, int chat, int knob, string detail, string raw)

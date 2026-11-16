@@ -31,6 +31,7 @@ public sealed class MainViewModel : ObservableObject
     private int _masterSync;
     private double _masterVolume = 100;
     private bool _invertVolumeKnob;
+    private int _lastKnobPosition = -1;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
     private string _chatMixDetail = "Looking for the Nova Pro base station…";
@@ -182,7 +183,11 @@ public sealed class MainViewModel : ObservableObject
         {
             if (!Set(ref _invertVolumeKnob, value)) return;
             _config.InvertVolumeKnob = value;
-            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+            _engine.SetKnobInverted(value);
+            if (_lastKnobPosition >= 0)
+                ApplyKnob(_lastKnobPosition);
+            else
+                try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
         }
     }
 
@@ -239,6 +244,8 @@ public sealed class MainViewModel : ObservableObject
             Raise(nameof(ChatMixReadout));
             _config.ChatMixBalance = balance;
             _engine.ApplyChatMix(game, chat);
+            ShowChannelVolume(ChannelId.Game, game);
+            ShowChannelVolume(ChannelId.Chat, chat);
         }
     }
 
@@ -303,18 +310,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (reading.Kind == ChatMixReportKind.Knob)
         {
-            if (reading.KnobBaseline || reading.KnobDelta == 0)
-            {
-                ChatMixDetail = reading.Detail;
-                return;
-            }
-
-            var current = (int)Math.Round(_masterVolume);
-            var next = ChatMixMath.ApplyVolumeStep(current, reading.KnobDelta, InvertVolumeKnob);
-            SetMasterPercent(next);
-            var change = next - current;
-            Log.Info($"Master volume {next} from knob 07 25 value={reading.Knob} delta={reading.KnobDelta.ToString("+#;-#;0")}");
-            ChatMixDetail = $"Volume knob {reading.Knob} {change.ToString("+#;-#;0")}% → master {next}.";
+            ApplyKnob(reading.Knob);
             return;
         }
 
@@ -355,6 +351,24 @@ public sealed class MainViewModel : ObservableObject
         if (_config.ChatMixBalance != balance)
             _config.ChatMixBalance = balance;
         _engine.ApplyChatMix(game, chat);
+        ShowChannelVolume(ChannelId.Game, game);
+        ShowChannelVolume(ChannelId.Chat, chat);
+    }
+
+    private void ApplyKnob(int position)
+    {
+        _lastKnobPosition = position;
+        var percent = _engine.ApplyKnobPosition(position);
+        SetMasterPercent(percent);
+        ChatMixDetail = $"Volume knob {position}/{Math.Max(1, _config.VolumeKnobMax)} → master {percent}.";
+    }
+
+    private void ShowChannelVolume(ChannelId id, int percent)
+    {
+        var channel = Channels.First(item => item.Id == id);
+        channel.Syncing = true;
+        try { channel.Volume = percent; }
+        finally { channel.Syncing = false; }
     }
 
     private string LastReport

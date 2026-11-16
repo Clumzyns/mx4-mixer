@@ -23,12 +23,13 @@
     <Grid x:Name="VerticalLayout">
       <Border x:Name="VGroove" Width="4" HorizontalAlignment="Center" CornerRadius="2" Background="#2A3140"/>
       <Border x:Name="VFill" Width="4" HorizontalAlignment="Center" VerticalAlignment="Bottom" CornerRadius="2" Background="#B6F23A" IsHitTestVisible="False"/>
+      <!-- False keeps 0 at the bottom and 100 at the top. Value is the real percent; drag up raises it. -->
       <Slider x:Name="VSlider" Orientation="Vertical" Minimum="0" Maximum="100" SmallChange="1" LargeChange="5"
-              IsDirectionReversed="True" IsMoveToPointEnabled="True"
+              IsDirectionReversed="False" IsMoveToPointEnabled="True"
               Value="{Binding Value, ElementName=Root, Mode=TwoWay}">
         <Slider.Template>
           <ControlTemplate TargetType="Slider">
-            <Track x:Name="PART_Track">
+            <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="False">
               <Track.DecreaseRepeatButton>
                 <RepeatButton Style="{StaticResource Repeat}" Command="Slider.DecreaseLarge"/>
               </Track.DecreaseRepeatButton>
@@ -57,7 +58,7 @@
               Value="{Binding Value, ElementName=Root, Mode=TwoWay}">
         <Slider.Template>
           <ControlTemplate TargetType="Slider">
-            <Track x:Name="PART_Track">
+            <Track x:Name="PART_Track" Orientation="Horizontal" IsDirectionReversed="False">
               <Track.DecreaseRepeatButton>
                 <RepeatButton Style="{StaticResource Repeat}" Command="Slider.DecreaseLarge"/>
               </Track.DecreaseRepeatButton>

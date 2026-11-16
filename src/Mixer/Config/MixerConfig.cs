@@ -19,8 +19,10 @@ public sealed class MixerConfig
     public int ChatMixBalance { get; set; } = 50;
     /// <summary>Master output gain, 0-1. The base-station volume knob nudges this.</summary>
     public float MasterVolume { get; set; } = 1f;
-    /// <summary>When set, a rising 07 25 position turns master volume down.</summary>
+    /// <summary>When set, NN 0 is silent and the top of the knob is full. Off means NN is attenuation.</summary>
     public bool InvertVolumeKnob { get; set; }
+    /// <summary>Highest 07 25 position seen. Defaults to 56, the base station's silence stop.</summary>
+    public int VolumeKnobMax { get; set; } = ChatMixMath.DefaultVolumeKnobMax;
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -61,6 +63,8 @@ public sealed class MixerConfig
 
         ChatMixBalance = Math.Clamp(ChatMixBalance, 0, 100);
         MasterVolume = VolumeMath.NormalizeStored(MasterVolume);
+        if (VolumeKnobMax < 1) VolumeKnobMax = ChatMixMath.DefaultVolumeKnobMax;
+        if (VolumeKnobMax > 255) VolumeKnobMax = 255;
     }
 
     public ChannelSettings Channel(ChannelId id)

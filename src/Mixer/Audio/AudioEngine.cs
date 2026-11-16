@@ -33,7 +33,6 @@ public sealed class AudioEngine : IDisposable
     private string _status = "Starting audio engine…";
     private bool _settingOutput;
     private bool _settingInput;
-    private bool _gainQueued;
     private int _scanDepth;
     private bool _scanAgain;
     private bool _disposed;
@@ -45,6 +44,9 @@ public sealed class AudioEngine : IDisposable
     private bool _virtualMixActive;
     private string _sonarWarning = "";
     private string _backendName = "";
+    private readonly LiveMix _gains = new();
+    private int _gainQueuedFlag;
+    private int _saveQueued;
 
     public AudioEngine(MixerConfig config)
     {
@@ -54,7 +56,9 @@ public sealed class AudioEngine : IDisposable
         _notifications = new DeviceNotifications(this);
         _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Background, (_, _) => TickMeters(), _dispatcher);
         _scanTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(800), DispatcherPriority.Background, (_, _) => Scan(), _dispatcher);
-        _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _gains.Load(config);
+        SetKnobInverted(config.InvertVolumeKnob);
         _saveTimer.Tick += (_, _) =>
         {
             _saveTimer.Stop();
@@ -125,21 +129,40 @@ public sealed class AudioEngine : IDisposable
     public void SetMasterVolume(float volume)
     {
         var next = VolumeMath.Clamp(volume);
-        if (Math.Abs(_config.MasterVolume - next) <= 0.0005f)
-        {
-            ScheduleSave();
-            return;
-        }
-
+        _gains.SetMaster(next);
+        if (Math.Abs(_config.MasterVolume - next) <= 0.0005f) return;
         _config.MasterVolume = next;
         QueueGain();
         ScheduleSave();
-        Notify();
     }
+
+    /// <summary>
+    /// 07 25 position. NN is attenuation unless inverted. The live master gain updates before this returns.
+    /// </summary>
+    public int ApplyKnobPosition(int position)
+    {
+        position = Math.Clamp(position, 0, 255);
+        var max = Math.Max(1, _config.VolumeKnobMax);
+        if (position > max)
+        {
+            max = position;
+            _config.VolumeKnobMax = max;
+        }
+
+        var percent = ChatMixMath.VolumeFromKnob(position, max, Volatile.Read(ref _invertKnob) != 0);
+        SetMasterVolume(percent / 100f);
+        return percent;
+    }
+
+    private int _invertKnob;
+
+    public void SetKnobInverted(bool invert) => Volatile.Write(ref _invertKnob, invert ? 1 : 0);
 
     public void SetChannelVolume(ChannelId id, float volume)
     {
-        _config.Channel(id).Volume = VolumeMath.Clamp(volume);
+        var next = VolumeMath.Clamp(volume);
+        _gains.SetChannel(id, next);
+        _config.Channel(id).Volume = next;
         QueueGain();
         ScheduleSave();
     }
@@ -151,22 +174,17 @@ public sealed class AudioEngine : IDisposable
     {
         var gameVolume = VolumeMath.Clamp(game / 100f);
         var chatVolume = VolumeMath.Clamp(chat / 100f);
-        var gameChanged = Math.Abs(_config.Channel(ChannelId.Game).Volume - gameVolume) > 0.005f;
-        var chatChanged = Math.Abs(_config.Channel(ChannelId.Chat).Volume - chatVolume) > 0.005f;
-        if (!gameChanged && !chatChanged)
-        {
-            ScheduleSave();
-            return;
-        }
+        _gains.SetChannel(ChannelId.Game, gameVolume);
+        _gains.SetChannel(ChannelId.Chat, chatVolume);
         _config.Channel(ChannelId.Game).Volume = gameVolume;
         _config.Channel(ChannelId.Chat).Volume = chatVolume;
         QueueGain();
         ScheduleSave();
-        Notify();
     }
 
     public void SetChannelMuted(ChannelId id, bool muted)
     {
+        _gains.SetMuted(id, muted);
         _config.Channel(id).Muted = muted;
         QueueGain();
         ScheduleSave();
@@ -441,8 +459,8 @@ public sealed class AudioEngine : IDisposable
             }
 
             var throughMix = _virtualMixActive && _virtualInputs.ContainsKey(channel);
-            var channelScale = _virtualMixActive ? 1f : settings.Volume;
-            var scale = throughMix ? channelScale : channelScale * VolumeMath.Clamp(_config.MasterVolume);
+            var channelScale = _virtualMixActive ? 1f : _gains.Channel(channel);
+            var scale = throughMix ? channelScale : channelScale * _gains.Master;
             var external = memory.HasWritten && Math.Abs(current - memory.LastVolume) > 0.02f;
             if (external && scale > 0.001f)
             {
@@ -758,16 +776,31 @@ public sealed class AudioEngine : IDisposable
 
     private void QueueGain()
     {
-        if (_gainQueued) return;
-        _gainQueued = true;
+        if (Interlocked.Exchange(ref _gainQueuedFlag, 1) == 1) return;
         _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         {
-            _gainQueued = false;
+            Interlocked.Exchange(ref _gainQueuedFlag, 0);
             if (!_disposed) ApplyGains();
         }));
     }
 
     private void ScheduleSave()
+    {
+        if (_dispatcher.CheckAccess())
+        {
+            RestartSaveTimer();
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _saveQueued, 1) == 1) return;
+        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            Interlocked.Exchange(ref _saveQueued, 0);
+            if (!_disposed) RestartSaveTimer();
+        }));
+    }
+
+    private void RestartSaveTimer()
     {
         _saveTimer.Stop();
         _saveTimer.Start();
@@ -877,7 +910,7 @@ public sealed class AudioEngine : IDisposable
             if (_capture.TryGetValue(id, out var device))
                 captures[channel] = device;
         }
-        _mix = VirtualMixGraph.TryStart(_render[_masterOutputId!], captures, _virtualInputs, _config, _render);
+        _mix = VirtualMixGraph.TryStart(_render[_masterOutputId!], captures, _virtualInputs, _config, _render, _gains);
         if (_mix == null)
         {
             _virtualMixActive = false;

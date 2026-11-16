@@ -17,6 +17,10 @@ public partial class App : System.Windows.Application
     private TrayService? _tray;
     private MainWindow? _window;
     private MixerConfig? _config;
+    private MainViewModel? _viewModel;
+    private readonly object _readingGate = new();
+    private ChatMixReading _latestReading;
+    private int _readingQueued;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -55,10 +59,10 @@ public partial class App : System.Windows.Application
             _config = ConfigStore.Load();
             _engine = new AudioEngine(_config);
             _chatMix = new ChatMixMonitor { Enabled = _config.ChatMixEnabled };
-            var viewModel = new MainViewModel(_engine, _config, _chatMix);
-            _chatMix.Reading += (_, reading) => Dispatcher.BeginInvoke(() => viewModel.OnChatMix(reading));
-            _window = new MainWindow(viewModel);
-            _tray = new TrayService(_window, viewModel, ExitApplication);
+            _viewModel = new MainViewModel(_engine, _config, _chatMix);
+            _chatMix.Reading += OnChatMixReading;
+            _window = new MainWindow(_viewModel);
+            _tray = new TrayService(_window, _viewModel, ExitApplication);
             _chatMix.Start();
             _engine.Start();
             if (_config.StartMinimized)
@@ -89,6 +93,33 @@ public partial class App : System.Windows.Application
         try { _tray?.Dispose(); } catch { /* already stopped */ }
         try { _instance?.Dispose(); } catch { /* already stopped */ }
         Shutdown();
+    }
+
+    private void OnChatMixReading(object? sender, ChatMixReading reading)
+    {
+        if (_engine != null)
+        {
+            if (reading.Kind == ChatMixReportKind.Levels && reading.HasLevels && reading.Game >= 0)
+                _engine.ApplyChatMix(reading.Game, reading.Chat);
+            else if (reading.Kind == ChatMixReportKind.Knob)
+                _engine.ApplyKnobPosition(reading.Knob);
+        }
+
+        lock (_readingGate) _latestReading = reading;
+        if (Interlocked.CompareExchange(ref _readingQueued, 1, 0) == 0)
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, DrainChatMix);
+    }
+
+    private void DrainChatMix()
+    {
+        ChatMixReading reading;
+        lock (_readingGate) reading = _latestReading;
+        Interlocked.Exchange(ref _readingQueued, 0);
+        _viewModel?.OnChatMix(reading);
+        bool newer;
+        lock (_readingGate) newer = !reading.Equals(_latestReading);
+        if (newer && Interlocked.CompareExchange(ref _readingQueued, 1, 0) == 0)
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, DrainChatMix);
     }
 
     private void ShowExisting() => Dispatcher.BeginInvoke(() => _window?.ShowFromTray());
