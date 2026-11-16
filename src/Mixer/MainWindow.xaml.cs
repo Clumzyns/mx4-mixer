@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using Mixer.Audio;
+using Mixer.Services;
 using Mixer.ViewModels;
 
 namespace Mixer;
@@ -33,17 +34,24 @@ public partial class MainWindow : Window
         };
     }
 
-    private TimeSpan? _lastMeterFrame;
+    private long _lastMeterTick;
 
     private void OnMeterFrame(object? sender, EventArgs e)
     {
-        if (e is not RenderingEventArgs args) return;
-        var now = args.RenderingTime;
-        if (_lastMeterFrame is TimeSpan last && now >= last && now - last < TimeSpan.FromMilliseconds(32))
-            return;
-        _lastMeterFrame = now;
-        if (DataContext is MainViewModel viewModel)
-            viewModel.ConsumePeaks();
+        try
+        {
+            var now = Environment.TickCount64;
+            var elapsed = now - _lastMeterTick;
+            if (_lastMeterTick != 0 && elapsed >= 0 && elapsed < 32) return;
+            _lastMeterTick = now;
+            if (DataContext is MainViewModel viewModel)
+                viewModel.ConsumePeaks();
+        }
+        catch (Exception ex)
+        {
+            CompositionTarget.Rendering -= OnMeterFrame;
+            Log.Error("Meter frame", ex);
+        }
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)

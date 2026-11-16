@@ -19,7 +19,7 @@ public static class Log
             var path = Path.Combine(dir, "mixer.log");
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {level} {message}";
             if (exception != null)
-                line += " " + exception.GetType().Name + ": " + exception.Message;
+                line += Environment.NewLine + exception;
 
             lock (Gate)
             {

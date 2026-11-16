@@ -60,8 +60,8 @@ public sealed class AudioEngine : IDisposable
         _enumerator = new MMDeviceEnumerator();
         _notifications = new DeviceNotifications(this);
         _meterThread = new Thread(MeterLoop) { IsBackground = true, Name = "Mixer.Meters" };
-        _scanTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(800), DispatcherPriority.Background, (_, _) => Scan(), _dispatcher);
-        _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _scanTimer = new DispatcherTimer(SafeTime.Milliseconds(800), DispatcherPriority.Background, (_, _) => Scan(), _dispatcher);
+        _saveTimer = new DispatcherTimer { Interval = SafeTime.Milliseconds(500) };
         _gains.Load(config);
         SetKnobInverted(config.InvertVolumeKnob);
         _saveTimer.Tick += (_, _) =>

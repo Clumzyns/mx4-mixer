@@ -26,6 +26,16 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex)
+                Log.Error("Unhandled", ex);
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Log.Error("Unobserved task", args.Exception);
+            args.SetObserved();
+        };
         SessionEnding += (_, _) =>
         {
             IsExiting = true;
