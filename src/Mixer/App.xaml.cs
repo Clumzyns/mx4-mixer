@@ -15,6 +15,7 @@ public partial class App : System.Windows.Application
     private SingleInstance? _instance;
     private AudioEngine? _engine;
     private ChatMixMonitor? _chatMix;
+    private BaseStationDisplay? _display;
     private TrayService? _tray;
     private MainWindow? _window;
     private MixerConfig? _config;
@@ -78,11 +79,13 @@ public partial class App : System.Windows.Application
             _config = ConfigStore.Load();
             _engine = new AudioEngine(_config);
             _chatMix = new ChatMixMonitor { Enabled = _config.ChatMixEnabled };
-            _viewModel = new MainViewModel(_engine, _config, _chatMix);
+            _display = new BaseStationDisplay(_config, _chatMix);
+            _viewModel = new MainViewModel(_engine, _config, _chatMix, _display);
             _chatMix.Reading += OnChatMixReading;
             _window = new MainWindow(_viewModel);
             _tray = new TrayService(_window, _viewModel, ExitApplication);
             _chatMix.Start();
+            _display.Start();
             _engine.Start();
             try { Autostart.Set(_config.StartWithWindows); }
             catch (Exception ex) { Log.Error("Startup registration failed", ex); }
@@ -110,6 +113,7 @@ public partial class App : System.Windows.Application
         if (IsExiting && _window == null) return;
         IsExiting = true;
         TrySave();
+        try { _display?.Dispose(); } catch { /* already stopped */ }
         try { _chatMix?.Dispose(); } catch { /* already stopped */ }
         try { _engine?.Dispose(); } catch { /* already stopped */ }
         try { _tray?.Dispose(); } catch { /* already stopped */ }

@@ -80,6 +80,7 @@ public sealed class ChatMixMonitor : IDisposable
         _wake.Set();
         try { _thread.Join(2000); } catch { /* background read */ }
         _wake.Dispose();
+        _oledFlushed.Dispose();
     }
 
     private void Loop()
@@ -150,7 +151,6 @@ public sealed class ChatMixMonitor : IDisposable
                 continue;
             }
 
-            stream.ReadTimeout = 250;
             var wrote = false;
             if (ShouldWriteInit(device, out var writeReason))
             {
@@ -175,10 +175,11 @@ public sealed class ChatMixMonitor : IDisposable
                 Log.Info($"ChatMix skip init on {tag} ({writeReason}); reading input anyway. path={device.DevicePath}");
             }
 
+            stream.ReadTimeout = wrote ? 50 : 250;
             streams.Add((device, stream, wrote));
             var captured = stream;
             var capturedDevice = device;
-            var thread = new Thread(() => ReadLoop(captured, capturedDevice, () => Volatile.Read(ref running) == 1))
+            var thread = new Thread(() => ReadLoop(captured, capturedDevice, () => Volatile.Read(ref running) == 1, wrote))
             {
                 IsBackground = true,
                 Name = "Mixer.ChatMix.Read"
@@ -211,8 +212,10 @@ public sealed class ChatMixMonitor : IDisposable
         {
             if (wrote)
             {
+                try { FlushOled(stream, device); } catch { /* release is best-effort */ }
                 try
                 {
+                    SendOled(stream, device, OledScreen.ReturnToUi());
                     Write(stream, device, [0x06, 0x49, 0x00]);
                     Write(stream, device, [0x06, 0x8D, 0x00]);
                 }
@@ -222,10 +225,16 @@ public sealed class ChatMixMonitor : IDisposable
         }
     }
 
-    private void ReadLoop(HidStream stream, HidDevice device, Func<bool> running)
+    private void ReadLoop(HidStream stream, HidDevice device, Func<bool> running, bool oled)
     {
         var buffer = new byte[Math.Max(device.GetMaxInputReportLength(), 64)];
         var tag = CollectionTag(device.DevicePath);
+        if (oled)
+        {
+            int feature = 0;
+            try { feature = device.GetMaxFeatureReportLength(); } catch { /* logged on the write */ }
+            Log.Info($"OLED stream {tag} maxFeature={feature} maxOut={SafeOutputLength(device)}");
+        }
         while (running())
         {
             int read;
@@ -235,6 +244,7 @@ public sealed class ChatMixMonitor : IDisposable
             }
             catch (TimeoutException)
             {
+                if (oled) FlushOled(stream, device);
                 continue;
             }
             catch (IOException)
@@ -264,6 +274,92 @@ public sealed class ChatMixMonitor : IDisposable
                 Note(log);
             if (update is ChatMixReading reading)
                 Reading?.Invoke(this, reading);
+            if (oled) FlushOled(stream, device);
+        }
+    }
+
+    private readonly object _oledGate = new();
+    private byte[][]? _oledPackets;
+    private int _oledGeneration;
+    private int _oledSent;
+    private readonly ManualResetEventSlim _oledFlushed = new(true);
+
+    public int SubmitOled(byte[][] packets)
+    {
+        lock (_oledGate)
+        {
+            _oledPackets = packets;
+            _oledGeneration++;
+            _oledFlushed.Reset();
+            return _oledGeneration;
+        }
+    }
+
+    public bool OledCaughtUp(int generation)
+    {
+        lock (_oledGate)
+            return _oledSent >= generation;
+    }
+
+    public void WaitOled(int generation, int milliseconds)
+    {
+        var start = Environment.TickCount64;
+        while (Environment.TickCount64 - start < milliseconds)
+        {
+            if (OledCaughtUp(generation)) return;
+            _oledFlushed.Wait(20);
+        }
+    }
+
+    private void FlushOled(HidStream stream, HidDevice device)
+    {
+        byte[][]? packets;
+        int generation;
+        lock (_oledGate)
+        {
+            if (_oledPackets == null || _oledSent >= _oledGeneration) return;
+            packets = _oledPackets;
+            generation = _oledGeneration;
+        }
+
+        foreach (var packet in packets)
+            SendOled(stream, device, packet);
+
+        lock (_oledGate)
+        {
+            if (_oledGeneration == generation)
+            {
+                _oledSent = generation;
+                _oledFlushed.Set();
+            }
+        }
+    }
+
+    private static void SendOled(HidStream stream, HidDevice device, byte[] packet)
+    {
+        try
+        {
+            stream.SetFeature(packet, 0, packet.Length);
+            Log.Info($"OLED SetFeature {Hex(packet, Math.Min(6, packet.Length))} len={packet.Length} hr=0x00000000");
+        }
+        catch (Exception ex)
+        {
+            var win32 = ex is System.ComponentModel.Win32Exception win ? win.NativeErrorCode : unchecked((int)(ex.HResult & 0xFFFF));
+            Log.Error($"OLED SetFeature {Hex(packet, Math.Min(6, packet.Length))} len={packet.Length} hr=0x{ex.HResult:X8} win32={win32}", ex);
+        }
+
+        if (packet.Length > 1 && packet[1] == 0x95)
+        {
+            try
+            {
+                Write(stream, device, [0x06, 0x95]);
+                Log.Info("OLED output 06 95 hr=0x00000000");
+            }
+            catch (Exception ex)
+            {
+                var win32 = ex is System.ComponentModel.Win32Exception win ? win.NativeErrorCode : unchecked((int)(ex.HResult & 0xFFFF));
+                Log.Error($"OLED output 06 95 hr=0x{ex.HResult:X8} win32={win32}", ex);
+            }
         }
     }
 

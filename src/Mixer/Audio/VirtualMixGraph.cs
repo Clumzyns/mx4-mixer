@@ -416,18 +416,23 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         private readonly float[] _right;
         private readonly int _capacity;
         private readonly int _target;
-        private readonly int _period;
+        private readonly int _low;
+        private readonly int _high;
         private readonly object _gate = new();
         private int _read;
         private int _count;
+        private int _sinceCorrection = 2;
+        private bool _primed;
         private float _holdL;
         private float _holdR;
 
         public DriftRing(int sampleRate)
         {
-            _period = Math.Max(32, sampleRate * PeriodMs / 1000);
-            _target = _period * 4;
-            _capacity = _period * 12;
+            var period = Math.Max(32, sampleRate * PeriodMs / 1000);
+            _target = period * 4;
+            _low = period * 2;
+            _high = period * 6;
+            _capacity = period * 12;
             _left = new float[_capacity];
             _right = new float[_capacity];
         }
@@ -453,14 +458,6 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                     _count++;
                 }
 
-                if (_count > _target + _period * 2)
-                {
-                    var extra = _count - (_target + _period);
-                    _read = (_read + extra) % _capacity;
-                    _count -= extra;
-                    dropped += extra;
-                }
-
                 return dropped;
             }
         }
@@ -472,20 +469,28 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                 var missing = 0;
                 var inserted = 0;
                 var dropped = 0;
-                if (_count > _target + _period)
+                if (!_primed)
                 {
-                    var extra = Math.Min(_count - _target, _period);
-                    _read = (_read + extra) % _capacity;
-                    _count -= extra;
-                    dropped += extra;
+                    if (_count >= _target) _primed = true;
                 }
-                else if (_count + _period < _target && _count > 2 && frames > 1)
+                else if (++_sinceCorrection >= 2 && frames > 1)
                 {
-                    inserted = 1;
+                    if (_count > _high)
+                    {
+                        _read = (_read + 1) % _capacity;
+                        _count--;
+                        dropped = 1;
+                        _sinceCorrection = 0;
+                    }
+                    else if (_count < _low && _count > frames)
+                    {
+                        inserted = 1;
+                        _sinceCorrection = 0;
+                    }
                 }
 
                 var need = frames - inserted;
-                var take = Math.Min(_count, need);
+                var take = Math.Min(_count, Math.Max(0, need));
                 for (var i = 0; i < take; i++)
                 {
                     _holdL = _left[_read];
@@ -496,18 +501,18 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
                     _count--;
                 }
 
-                if (inserted == 1 && take > 0)
+                var filled = take;
+                if (inserted == 1 && take > 0 && filled < frames)
                 {
-                    left[take] = _holdL * gain;
-                    right[take] = _holdR * gain;
-                    for (var i = take + 1; i < frames; i++)
-                    {
-                        left[i] = left[i - 1];
-                        right[i] = right[i - 1];
-                    }
+                    left[filled] = _holdL * gain;
+                    right[filled] = _holdR * gain;
+                    filled++;
+                }
+                else
+                {
+                    inserted = 0;
                 }
 
-                var filled = take + inserted;
                 if (filled < frames)
                 {
                     missing = frames - filled;

@@ -335,6 +335,8 @@
                     ToolTip="The close button hides Mixer. Mixing keeps running. Quit from the tray icon to exit."/>
           <CheckBox Content="Invert knob" IsChecked="{Binding InvertVolumeKnob}"
                     ToolTip="By default knob position 0 is full volume and 56 is silent. Turn this on to swap that."/>
+          <CheckBox Content="Custom base station display" IsChecked="{Binding CustomDisplay}"
+                    ToolTip="Draw master, ChatMix, and the four channel levels on the Nova Pro screen. The stock screen returns when Mixer exits."/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
                      Text="The base station knob is attenuation: position 0 is full master volume and 56 is silent. A higher position than 56 extends the scale. ChatMix reports move Game and Chat as they arrive."/>
           <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>

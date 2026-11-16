@@ -11,6 +11,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly AudioEngine _engine;
     private readonly MixerConfig _config;
     private readonly ChatMixMonitor _chatMix;
+    private readonly BaseStationDisplay _display;
     private readonly Dictionary<string, AppChipViewModel> _chips = new(StringComparer.OrdinalIgnoreCase);
     private int _syncing;
     private string? _selectedOutputId;
@@ -32,6 +33,7 @@ public sealed class MainViewModel : ObservableObject
     private int _masterSync;
     private double _masterVolume = 100;
     private bool _invertVolumeKnob;
+    private bool _customDisplay;
     private int _lastKnobPosition = -1;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
@@ -44,11 +46,12 @@ public sealed class MainViewModel : ObservableObject
     private string _mediaCableId = "";
     private string _auxCableId = "";
 
-    public MainViewModel(AudioEngine engine, MixerConfig config, ChatMixMonitor chatMix)
+    public MainViewModel(AudioEngine engine, MixerConfig config, ChatMixMonitor chatMix, BaseStationDisplay display)
     {
         _engine = engine;
         _config = config;
         _chatMix = chatMix;
+        _display = display;
         _startWithWindows = config.StartWithWindows;
         _startMinimized = config.StartMinimized;
         _closeToTray = config.CloseToTray;
@@ -56,6 +59,7 @@ public sealed class MainViewModel : ObservableObject
         _chatMixBalance = Math.Clamp(config.ChatMixBalance, 0, 100);
         _masterVolume = ChatMixMath.Percent(config.MasterVolume);
         _invertVolumeKnob = config.InvertVolumeKnob;
+        _customDisplay = config.CustomDisplay;
         _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
         _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
         Channels = new ObservableCollection<ChannelViewModel>(
@@ -212,6 +216,18 @@ public sealed class MainViewModel : ObservableObject
                 ApplyKnob(_lastKnobPosition);
             else
                 ConfigStore.SaveSoon(_config);
+        }
+    }
+
+    public bool CustomDisplay
+    {
+        get => _customDisplay;
+        set
+        {
+            if (!Set(ref _customDisplay, value)) return;
+            _config.CustomDisplay = value;
+            _display.Enabled = value;
+            ConfigStore.SaveSoon(_config);
         }
     }
 

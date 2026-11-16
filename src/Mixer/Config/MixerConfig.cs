@@ -16,6 +16,8 @@ public sealed class MixerConfig
     public bool StartMinimized { get; set; }
     public bool CloseToTray { get; set; } = true;
     public bool ChatMixEnabled { get; set; } = true;
+    /// <summary>Draw the mix on the Nova Pro OLED while Mixer is running.</summary>
+    public bool CustomDisplay { get; set; } = true;
     /// <summary>0 is Game only, 100 is Chat only, 50 keeps both full.</summary>
     public int ChatMixBalance { get; set; } = 50;
     /// <summary>Master output gain, 0-1. The base-station volume knob nudges this.</summary>
