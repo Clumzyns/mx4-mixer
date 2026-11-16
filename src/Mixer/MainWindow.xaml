@@ -19,9 +19,9 @@
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType">
   <shell:WindowChrome.WindowChrome>
-    <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0"/>
+    <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="8"/>
   </shell:WindowChrome.WindowChrome>
-  <Grid>
+  <Grid x:Name="LayoutRoot">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
@@ -29,7 +29,7 @@
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" Margin="16,12,8,8">
+    <Grid Grid.Row="0" Height="40" Margin="12,0,4,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
@@ -38,7 +38,7 @@
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
 
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" MouseLeftButtonDown="Title_MouseLeftButtonDown" Cursor="Arrow">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <Grid Width="22" Height="22" Margin="0,0,10,0">
           <Border Background="#B6F23A" CornerRadius="6"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -54,6 +54,7 @@
         <TextBlock Text="OUTPUT" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
         <ComboBox x:Name="OutputCombo" Width="240" ItemsSource="{Binding OutputChoices}" SelectedValuePath="Id"
                   SelectedValue="{Binding SelectedOutputId, Mode=OneWay}" SelectionChanged="OutputCombo_SelectionChanged"
+                  shell:WindowChrome.IsHitTestVisibleInChrome="True"
                   ToolTip="Windows default playback device"/>
       </StackPanel>
 
@@ -61,16 +62,18 @@
         <TextBlock Text="INPUT" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
         <ComboBox x:Name="InputCombo" Width="220" ItemsSource="{Binding InputDevices}" SelectedValuePath="Id"
                   SelectedValue="{Binding SelectedInputId, Mode=OneWay}" SelectionChanged="InputCombo_SelectionChanged"
+                  shell:WindowChrome.IsHitTestVisibleInChrome="True"
                   ToolTip="Windows default microphone"/>
         <controls:LevelMeter Width="64" Height="8" Margin="10,0,8,0" VerticalAlignment="Center" Orientation="Horizontal" Value="{Binding MicPeak}"/>
-        <Button Style="{StaticResource MicButton}" Content="{Binding MicMuteLabel}" Command="{Binding ToggleMicCommand}" ToolTip="Mute the microphone"/>
+        <Button Style="{StaticResource MicButton}" Content="{Binding MicMuteLabel}" Command="{Binding ToggleMicCommand}"
+                shell:WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Mute the microphone"/>
       </StackPanel>
 
       <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
-        <Button Style="{StaticResource ChromeButton}" Content="⚙" ToolTip="Settings" Click="Settings_Click"/>
-        <Button Style="{StaticResource ChromeButton}" Content="—" ToolTip="Minimize to tray" Click="Minimize_Click"/>
-        <Button Style="{StaticResource ChromeButton}" Content="▢" ToolTip="Maximize" Click="Maximize_Click"/>
-        <Button Style="{StaticResource CloseButton}" Content="✕" ToolTip="Close to tray" Click="Close_Click"/>
+        <Button Style="{StaticResource ChromeButton}" Content="⚙" ToolTip="Settings" Click="Settings_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+        <Button Style="{StaticResource ChromeButton}" Content="—" ToolTip="Minimize to tray" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+        <Button Style="{StaticResource ChromeButton}" Content="▢" ToolTip="Maximize" Click="Maximize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+        <Button Style="{StaticResource CloseButton}" Content="✕" ToolTip="Close to tray" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
       </StackPanel>
     </Grid>
 

@@ -28,6 +28,7 @@ public partial class MainWindow : Window
             var source = HwndSource.FromHwnd(handle);
             source?.AddHook(WndProc);
             TrySetBorderColor(handle);
+            ApplyMaximizedPadding();
         };
     }
 
@@ -54,11 +55,14 @@ public partial class MainWindow : Window
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
+        ApplyMaximizedPadding();
         if (WindowState == WindowState.Minimized && !App.IsExiting)
         {
             WindowState = WindowState.Normal;
             HideToTray();
+            return;
         }
+        Dispatcher.BeginInvoke(UpdateColumns);
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -78,15 +82,18 @@ public partial class MainWindow : Window
         HiddenToTray?.Invoke(this, EventArgs.Empty);
     }
 
-    private void Title_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void ApplyMaximizedPadding()
     {
-        if (e.ClickCount == 2)
+        if (LayoutRoot == null) return;
+        if (WindowState == WindowState.Maximized)
         {
-            ToggleMaximize();
-            return;
+            var frame = SystemParameters.WindowResizeBorderThickness;
+            LayoutRoot.Margin = new Thickness(frame.Left, frame.Top, frame.Right, frame.Bottom);
         }
-        try { DragMove(); }
-        catch (InvalidOperationException) { /* button already released */ }
+        else
+        {
+            LayoutRoot.Margin = new Thickness(0);
+        }
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -112,8 +119,11 @@ public partial class MainWindow : Window
     private void ToggleMaximize()
         => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
-    private void ColumnScroll_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void ColumnScroll_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateColumns();
+
+    private void UpdateColumns()
     {
+        if (ColumnScroll == null || ColumnHost == null) return;
         var width = ColumnScroll.ViewportWidth;
         var height = ColumnScroll.ViewportHeight;
         if (!double.IsNaN(width) && width > 0)
