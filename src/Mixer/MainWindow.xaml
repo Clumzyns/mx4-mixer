@@ -68,7 +68,7 @@
 
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock Text="MIXER" FontFamily="{StaticResource DisplayFont}" FontStretch="Condensed" FontWeight="Bold" FontSize="34" VerticalAlignment="Center"/>
-          <TextBlock Text="MX-5 · FIVE-CHANNEL VIRTUAL CONSOLE" Style="{StaticResource Legend}" VerticalAlignment="Center" Margin="14,6,0,0"/>
+          <TextBlock Text="MX-4 · FOUR-CHANNEL VIRTUAL CONSOLE" Style="{StaticResource Legend}" VerticalAlignment="Center" Margin="14,6,0,0"/>
         </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
@@ -268,7 +268,7 @@
           </Grid.ColumnDefinitions>
 
           <ScrollViewer x:Name="ColumnScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" SizeChanged="ColumnScroll_SizeChanged">
-            <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="760">
+            <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="620">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                   <UniformGrid Rows="1"/>
@@ -531,7 +531,7 @@
           <TextBlock Text="Latency" Margin="0,14,0,4"/>
           <ComboBox Width="120" HorizontalAlignment="Left" ItemsSource="{Binding LatencyChoices}" SelectedItem="{Binding MixLatencyMs}"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,0"
-                     Text="Shared-mode period for the cable captures and the master render, in milliseconds."/>
+                     Text="How far ahead the mix is buffered, in milliseconds. Higher numbers delay the sound more: 20 is the default and 40 roughly doubles the delay."/>
           <CheckBox Content="Limiter" IsChecked="{Binding LimiterEnabled}" Margin="0,12,0,0"
                     ToolTip="Turns the mix down for a moment when the channels add up past full scale. Quieter audio is left untouched. Adds 2 ms. Off sends the sum to the device as is."/>
           <CheckBox Content="Debug: pass Game straight through" IsChecked="{Binding GameStraightThrough}" Margin="0,12,0,0"

@@ -580,6 +580,19 @@ public sealed class AudioEngine : IDisposable
                         try { pid = session.GetProcessID; } catch { pid = 0; }
                     }
 
+                    // Mixer's own stream is the finished mix. It is not an app to route, and nothing may turn it down
+                    // a second time, so it stays at full volume and out of the list.
+                    if (!system && pid == (uint)Environment.ProcessId)
+                    {
+                        try
+                        {
+                            if (session.SimpleAudioVolume.Volume < 0.999f) session.SimpleAudioVolume.Volume = 1f;
+                            if (session.SimpleAudioVolume.Mute) session.SimpleAudioVolume.Mute = false;
+                        }
+                        catch { /* session went away */ }
+                        continue;
+                    }
+
                     string instanceId;
                     try { instanceId = session.GetSessionInstanceIdentifier; }
                     catch { instanceId = ""; }
@@ -774,11 +787,12 @@ public sealed class AudioEngine : IDisposable
 
     private ChannelId Resolve(string exeKey)
     {
+        // An app nobody has placed plays on the Windows default device, which is the Game cable, so it belongs to Game.
         if (_config.Assignments.TryGetValue(exeKey, out var raw) && ChannelIds.TryParse(raw, out var id))
-            return id;
+            return id == ChannelId.System ? ChannelId.Game : id;
         if (DefaultApps.Map.TryGetValue(exeKey, out var mapped))
             return mapped;
-        return ChannelId.System;
+        return ChannelId.Game;
     }
 
     private void PublishPeaks()
@@ -826,11 +840,10 @@ public sealed class AudioEngine : IDisposable
             if (pair.Value > _channelShown[index])
                 _channelShown[index] = pair.Value;
         }
+        // Channel meters show what each channel sends into the mix, after its fader, ChatMix and mute,
+        // so they add up to the output meter.
         for (var i = 0; i < _channelShown.Length; i++)
-        {
-            if (_gains.Muted((ChannelId)i) && _gains.MixGain((ChannelId)i) <= 0f)
-                _channelShown[i] = 0;
-        }
+            _channelShown[i] *= _gains.MixGain((ChannelId)i);
 
         var (outLeft, outRight, gain, limiting) = _mix?.TakeOutputMeter() ?? (0f, 0f, 1f, false);
         _outLeftShown = Decay(_outLeftShown, outLeft);
@@ -1109,8 +1122,9 @@ public sealed class AudioEngine : IDisposable
 
     private static float Decay(float shown, float sample)
     {
+        // The meters cover 60 dB, so the floor sits just below that at about -62 dBFS.
         var next = Math.Max(sample, shown * 0.84f);
-        return next < 0.004f ? 0f : next;
+        return next < 0.0008f ? 0f : next;
     }
 
     private static bool SameDevice(string? left, string? right)

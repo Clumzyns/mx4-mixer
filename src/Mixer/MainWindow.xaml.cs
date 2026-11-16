@@ -19,6 +19,20 @@ public partial class MainWindow : Window
 
     public event EventHandler? HiddenToTray;
 
+    static MainWindow()
+    {
+        // A closed picker ignores the mouse wheel, so scrolling a panel cannot change a setting by passing over it.
+        EventManager.RegisterClassHandler(typeof(ComboBox), PreviewMouseWheelEvent, new MouseWheelEventHandler(OnPickerWheel));
+    }
+
+    private static void OnPickerWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (sender is not ComboBox box || box.IsDropDownOpen) return;
+        e.Handled = true;
+        if (VisualTreeHelper.GetParent(box) is UIElement parent)
+            parent.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta) { RoutedEvent = MouseWheelEvent, Source = box });
+    }
+
     public MainWindow(MainViewModel viewModel)
     {
         DataContext = viewModel;
@@ -169,7 +183,7 @@ public partial class MainWindow : Window
         var width = ColumnScroll.ViewportWidth;
         var height = ColumnScroll.ViewportHeight;
         if (!double.IsNaN(width) && width > 0)
-            ColumnHost.Width = Math.Max(760, width);
+            ColumnHost.Width = Math.Max(620, width);
         if (!double.IsNaN(height) && height > 0)
             ColumnHost.ClearValue(HeightProperty);
     }

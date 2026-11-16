@@ -69,9 +69,9 @@ public sealed class MainViewModel : ObservableObject
         // The readout is the dial, not the channel faders. Until the base station reports, show the saved balance.
         (_chatMixGame, _chatMixChat) = ChatMixMath.ToLevels(config.ChatMixBalance);
         Channels = new ObservableCollection<ChannelViewModel>(
-            ChannelIds.All.Select(id => new ChannelViewModel(id, engine)));
+            Shown.Select(id => new ChannelViewModel(id, engine)));
         ChannelChoices = new ObservableCollection<ChannelChoice>(
-            ChannelIds.All.Select(id => new ChannelChoice { Id = id, Name = id.Title() }));
+            Shown.Select(id => new ChannelChoice { Id = id, Name = id.Title() }));
         OutputChoices.Add(new DeviceOption { Id = "", Name = "Default" });
         ToggleMicCommand = new RelayCommand(() => MicMuted = !MicMuted);
         ToggleSettingsCommand = new RelayCommand(() => SettingsOpen = !SettingsOpen);
@@ -354,8 +354,8 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyOutputMeter(PeakUpdate peaks)
     {
-        if (Math.Abs(_outLeft - peaks.OutLeft) >= 0.004) OutLeft = peaks.OutLeft;
-        if (Math.Abs(_outRight - peaks.OutRight) >= 0.004) OutRight = peaks.OutRight;
+        if (Moved(_outLeft, peaks.OutLeft)) OutLeft = peaks.OutLeft;
+        if (Moved(_outRight, peaks.OutRight)) OutRight = peaks.OutRight;
         var share = Math.Clamp(peaks.LimiterReductionDb / 12.0, 0, 1);
         if (Math.Abs(_limiterReduction - share) >= 0.004) LimiterReduction = share;
         LimiterWorking = peaks.LimiterReductionDb > 0.05f;
@@ -630,7 +630,8 @@ public sealed class MainViewModel : ObservableObject
 
             foreach (var channelSnap in snap.Channels)
             {
-                var channel = Channels.First(item => item.Id == channelSnap.Id);
+                var channel = Channels.FirstOrDefault(item => item.Id == channelSnap.Id);
+                if (channel == null) continue;
                 channel.Apply(channelSnap);
                 if (outputsRebuilt) channel.ReselectDevice();
             }
@@ -676,7 +677,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void Place(AppChipViewModel chip, ChannelId channelId)
     {
-        var destination = Channels.First(channel => channel.Id == channelId);
+        var destination = Channels.FirstOrDefault(channel => channel.Id == channelId) ?? Channels[0];
         foreach (var channel in Channels)
         {
             if (!ReferenceEquals(channel, destination) && channel.Apps.Contains(chip))
@@ -686,21 +687,28 @@ public sealed class MainViewModel : ObservableObject
             destination.Apps.Add(chip);
     }
 
+    /// <summary>The strips in the window. Apps nobody has placed land in Game, so there is no strip for them.</summary>
+    private static readonly ChannelId[] Shown = [ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux];
+
+    /// <summary>True when a meter value changed enough to redraw. The meters are in dB, so small levels count too.</summary>
+    private static bool Moved(double shown, double next) =>
+        Math.Abs(shown - next) > Math.Max(0.0002, 0.03 * Math.Max(shown, next));
+
     public void ApplyPeaks(PeakUpdate peaks)
     {
         ApplyOutputMeter(peaks);
-        if (Math.Abs(_micPeak - peaks.MicPeak) >= 0.02)
+        if (Moved(_micPeak, peaks.MicPeak))
             MicPeak = peaks.MicPeak;
         foreach (var channel in Channels)
         {
             var index = (int)channel.Id;
             var next = index < peaks.ChannelPeaks.Length ? peaks.ChannelPeaks[index] : 0;
-            if (Math.Abs(channel.Peak - next) >= 0.02)
+            if (Moved(channel.Peak, next))
                 channel.Peak = next;
             foreach (var app in channel.Apps)
             {
                 var appPeak = peaks.AppPeaks.TryGetValue(app.ExeKey, out var peak) ? peak : 0;
-                if (Math.Abs(app.Peak - appPeak) >= 0.02)
+                if (Moved(app.Peak, appPeak))
                     app.Peak = appPeak;
             }
         }
