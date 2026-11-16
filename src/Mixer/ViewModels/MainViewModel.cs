@@ -561,13 +561,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void RenameCables()
     {
-        var exe = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(exe)) return;
-        Process.Start(new ProcessStartInfo(exe, "--rename-cables")
-        {
-            UseShellExecute = true,
-            Verb = "runas"
-        });
+        VacRenamer.LaunchElevated();
     }
 
     private void OpenConfigFolder()

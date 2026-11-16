@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Threading;
 using Mixer.Audio.Com;
 using Mixer.Config;
@@ -310,7 +311,8 @@ public sealed class AudioEngine : IDisposable
             return;
         }
 
-        if (!SameDevice(TryDefault(flow), deviceId))
+        var cablesOwnPlayback = output && _virtualInputs.ContainsKey(ChannelId.Game);
+        if (!cablesOwnPlayback && !SameDevice(TryDefault(flow), deviceId))
         {
             if (output) _settingOutput = true;
             else _settingInput = true;
@@ -329,6 +331,10 @@ public sealed class AudioEngine : IDisposable
                 if (output) _settingOutput = false;
                 else _settingInput = false;
             }
+        }
+        else if (cablesOwnPlayback)
+        {
+            _status = "Master output updated. Windows playback is Game and calls use Chat.";
         }
 
         if (output)
@@ -671,7 +677,7 @@ public sealed class AudioEngine : IDisposable
         if (!_settingOutput)
         {
             var current = TryDefault(DataFlow.Render);
-            if (!string.IsNullOrEmpty(current) && !SameDevice(_masterOutputId, current))
+            if (!string.IsNullOrEmpty(current) && !SameDevice(_masterOutputId, current) && !IsVirtualRender(current))
             {
                 _masterOutputId = current;
                 _config.MasterOutputDeviceId = current;
@@ -725,7 +731,7 @@ public sealed class AudioEngine : IDisposable
 
         foreach (var id in map.Keys.Where(key => !seen.Contains(key)).ToList())
         {
-            _cableVolume.Release(map[id]);
+            _cableVolume.Release(id);
             try { map[id].Dispose(); } catch { /* already dead */ }
             map.Remove(id);
         }
@@ -934,19 +940,24 @@ public sealed class AudioEngine : IDisposable
         {
             _sonarWarning = "";
             if (_virtualInputs.Count > 0)
-                _status = "Mixing VAC lines into the master output.";
+                _status = "Mixing VAC lines into the master output. Windows playback is Game and calls use Chat.";
         }
 
         RememberCaptures();
         SyncCableVolumes();
+        ApplyWindowsDefaults();
         OfferCableRename();
     }
+
+    private string _bindingReport = "";
+    private string _windowsDefaultReport = "";
 
     private void BindChannelsToLines()
     {
         var usedLines = new HashSet<int>();
         var usedRenders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var changed = false;
+        var report = new StringBuilder();
         foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
         {
             var key = channel.Key();
@@ -972,7 +983,7 @@ public sealed class AudioEngine : IDisposable
             }
             if (cable == null)
             {
-                Log.Info($"Mix capture {channel} not started: no VAC line is available.");
+                report.AppendLine($"Mix capture {channel} not started: no VAC line is available.");
                 continue;
             }
             if (cable.Order is > 0 and < 1000)
@@ -990,7 +1001,7 @@ public sealed class AudioEngine : IDisposable
             {
                 _config.CableAssignments[key] = cable.RenderId;
                 changed = true;
-                Log.Info($"Channel {channel} remapped to Line {cable.Order} render={cable.RenderId}");
+                report.AppendLine($"Channel {channel} remapped to Line {cable.Order} render={cable.RenderId}");
             }
             if (!string.IsNullOrWhiteSpace(cable.CaptureId) &&
                 (!_config.CableCaptures.TryGetValue(key, out var savedCapture) || !SameDevice(savedCapture, cable.CaptureId)))
@@ -1002,12 +1013,18 @@ public sealed class AudioEngine : IDisposable
             var lineText = cable.Order is > 0 and < 1000 ? "Line " + cable.Order : "unnumbered";
             if (string.IsNullOrWhiteSpace(cable.CaptureId))
             {
-                Log.Info($"Mix capture {channel} not started: {lineText} render={cable.RenderId} has no recording endpoint.");
+                report.AppendLine($"Mix capture {channel} not started: {lineText} render={cable.RenderId} has no recording endpoint.");
                 continue;
             }
             _virtualCaptures[channel] = cable.CaptureId;
             _backendName = "VAC";
-            Log.Info($"Mix capture {channel} follows {lineText} render={cable.RenderId} capture={cable.CaptureId}");
+            report.AppendLine($"Mix capture {channel} follows {lineText} render={cable.RenderId} capture={cable.CaptureId}");
+        }
+        var text = report.ToString().TrimEnd();
+        if (!string.Equals(text, _bindingReport, StringComparison.Ordinal))
+        {
+            _bindingReport = text;
+            if (text.Length > 0) Log.Info(text);
         }
         if (changed)
         {
@@ -1015,6 +1032,64 @@ public sealed class AudioEngine : IDisposable
             ScheduleSave();
         }
     }
+
+    private void ApplyWindowsDefaults()
+    {
+        if (!_virtualInputs.TryGetValue(ChannelId.Game, out var game) || string.IsNullOrWhiteSpace(game))
+            return;
+        _virtualInputs.TryGetValue(ChannelId.Chat, out var chat);
+        var report = new StringBuilder();
+        _settingOutput = true;
+        try
+        {
+            if (!IsRenderRole(Role.Console, game) || !IsRenderRole(Role.Multimedia, game))
+            {
+                DefaultEndpoint.Set(game, 0, 1);
+                report.AppendLine($"Windows default playback is Game ({game}).");
+            }
+            if (!string.IsNullOrWhiteSpace(chat) && !IsRenderRole(Role.Communications, chat))
+            {
+                DefaultEndpoint.Set(chat, 2);
+                report.AppendLine($"Windows communications playback is Chat ({chat}).");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_windowsDefaultReport != "error")
+            {
+                _windowsDefaultReport = "error";
+                Log.Error("Set Windows default devices failed", ex);
+            }
+            return;
+        }
+        finally
+        {
+            _settingOutput = false;
+        }
+
+        var text = report.ToString().TrimEnd();
+        if (text.Length == 0 || text == _windowsDefaultReport) return;
+        _windowsDefaultReport = text;
+        Log.Info(text);
+    }
+
+    private bool IsRenderRole(Role role, string id)
+    {
+        try
+        {
+            if (!_enumerator.HasDefaultAudioEndpoint(DataFlow.Render, role)) return false;
+            using var device = _enumerator.GetDefaultAudioEndpoint(DataFlow.Render, role);
+            return SameDevice(device.ID, id);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool IsVirtualRender(string id) =>
+        _virtualInputs.Values.Any(item => SameDevice(item, id))
+        || _cables.Any(cable => SameDevice(cable.RenderId, id));
 
     private void ClearPinnedMixOutputs()
     {
@@ -1056,7 +1131,7 @@ public sealed class AudioEngine : IDisposable
             if (_virtualCaptures.TryGetValue(channel, out var captureId))
                 TryFindDevice(_capture, captureId, out capture);
             var settings = _config.Channel(channel);
-            links.Add(new CableVolume.Link(channel, render, capture, settings.Volume, settings.Muted));
+            links.Add(new CableVolume.Link(channel, render.ID, capture?.ID, settings.Volume, settings.Muted));
         }
         _cableVolume.Sync(links);
         foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
@@ -1091,14 +1166,8 @@ public sealed class AudioEngine : IDisposable
         catch (Exception ex) { Log.Error("Save failed", ex); }
         try
         {
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe)) return;
             Log.Info("Endpoint names do not match their channels. Asking Windows for permission to rename them.");
-            Process.Start(new ProcessStartInfo(exe, "--rename-cables")
-            {
-                UseShellExecute = true,
-                Verb = "runas"
-            });
+            VacRenamer.LaunchElevated();
         }
         catch (Exception ex)
         {

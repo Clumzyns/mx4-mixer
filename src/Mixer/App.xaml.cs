@@ -49,20 +49,22 @@ public partial class App : System.Windows.Application
             TrySave();
         };
 
-        if (e.Args.Any(arg => string.Equals(arg, "--rename-cables", StringComparison.OrdinalIgnoreCase)))
+        if (VacRenamer.IsRenameProcess(e.Args))
         {
+            var code = 0;
             try
             {
                 var count = VacRenamer.RenameAssigned();
-                MessageBox.Show($"Renamed {count} Virtual Audio Cable endpoints.", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Information);
+                Log.Info($"Renamed {count} Virtual Audio Cable endpoints.");
             }
             catch (Exception ex)
             {
                 Log.Error("Rename failed", ex);
-                MessageBox.Show("Couldn't rename the cables.\n\n" + ex.Message, AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+                code = 1;
             }
+            VacRenamer.ClearTicket();
             Shutdown();
-            return;
+            Environment.Exit(code);
         }
 
         if (!SingleInstance.TryAcquire(ShowExisting, out _instance))

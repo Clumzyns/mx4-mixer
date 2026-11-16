@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Security.Principal;
 using Mixer.Audio.Com;
 using Mixer.Config;
 using Mixer.Services;
@@ -99,6 +101,66 @@ internal static class VacRenamer
             device.Dispose();
         }
         return list;
+    }
+
+    public static string TicketPath => Path.Combine(ConfigStore.DirectoryPath, "rename.request");
+
+    public static void LaunchElevated()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return;
+        Directory.CreateDirectory(ConfigStore.DirectoryPath);
+        File.WriteAllText(TicketPath, DateTime.UtcNow.ToString("o"));
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = "--rename-cables",
+            UseShellExecute = true,
+            Verb = "runas"
+        });
+    }
+
+    public static bool IsRenameProcess(IEnumerable<string>? args)
+    {
+        if (HasRenameArg(args) || HasRenameArg(Environment.GetCommandLineArgs())) return true;
+        if (!File.Exists(TicketPath) || !IsAdministrator()) return false;
+        try
+        {
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(TicketPath);
+            return age >= TimeSpan.Zero && age < TimeSpan.FromMinutes(2);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static void ClearTicket()
+    {
+        try
+        {
+            if (File.Exists(TicketPath)) File.Delete(TicketPath);
+        }
+        catch
+        {
+            // The next launch ignores a stale ticket.
+        }
+    }
+
+    private static bool HasRenameArg(IEnumerable<string>? args) =>
+        args != null && args.Any(arg => string.Equals(arg, "--rename-cables", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsAdministrator()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static List<(string Id, string Name, int Line)> List(MMDeviceEnumerator enumerator)

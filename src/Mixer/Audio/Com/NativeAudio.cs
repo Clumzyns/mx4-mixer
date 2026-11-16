@@ -62,10 +62,14 @@ internal static class DefaultEndpoint
         [MarshalAs(UnmanagedType.LPWStr)] string deviceId,
         uint role);
 
-    public static void Set(string deviceId)
+    public static void Set(string deviceId) => Set(deviceId, 0, 1, 2);
+
+    /// <param name="roles">0 console, 1 multimedia, 2 communications.</param>
+    public static void Set(string deviceId, params uint[] roles)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
             throw new ArgumentException("A device id is required.", nameof(deviceId));
+        if (roles == null || roles.Length == 0) roles = [0, 1, 2];
 
         var errors = new List<string>();
         foreach (var candidate in InterfaceIds)
@@ -82,7 +86,7 @@ internal static class DefaultEndpoint
             try
             {
                 var fn = ReadSlot<SetDefaultEndpointDelegate>(instance, SetDefaultEndpointSlot);
-                for (uint role = 0; role < 3; role++)
+                foreach (var role in roles)
                 {
                     var roleHr = fn(instance, deviceId, role);
                     if (roleHr < 0) Marshal.ThrowExceptionForHR(roleHr);
