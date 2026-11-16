@@ -33,13 +33,15 @@ public partial class MainWindow : Window
         };
     }
 
-    private TimeSpan _lastMeterFrame = TimeSpan.MinValue;
+    private TimeSpan? _lastMeterFrame;
 
     private void OnMeterFrame(object? sender, EventArgs e)
     {
         if (e is not RenderingEventArgs args) return;
-        if (args.RenderingTime - _lastMeterFrame < TimeSpan.FromMilliseconds(32)) return;
-        _lastMeterFrame = args.RenderingTime;
+        var now = args.RenderingTime;
+        if (_lastMeterFrame is TimeSpan last && now >= last && now - last < TimeSpan.FromMilliseconds(32))
+            return;
+        _lastMeterFrame = now;
         if (DataContext is MainViewModel viewModel)
             viewModel.ConsumePeaks();
     }

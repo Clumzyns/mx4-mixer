@@ -22,7 +22,8 @@ internal static class EndpointRenamer
             var enumerator = (IMMDeviceEnumerator)Marshal.GetObjectForIUnknown(enumeratorPtr);
             enumerator.GetDevice(deviceId, out var device);
             device.OpenPropertyStore(2, out var store);
-            foreach (var key in new[] { DeviceDesc, FriendlyName })
+            var wrote = false;
+            foreach (var key in new[] { FriendlyName, DeviceDesc })
             {
                 var property = key;
                 var variant = new PropVariant
@@ -33,13 +34,20 @@ internal static class EndpointRenamer
                 try
                 {
                     store.SetValue(ref property, ref variant);
+                    store.Commit();
+                    wrote = true;
+                }
+                catch
+                {
+                    // DeviceDesc is not writable on every endpoint. FriendlyName is the name Windows shows.
                 }
                 finally
                 {
                     PropVariantClear(ref variant);
                 }
             }
-            store.Commit();
+            if (!wrote)
+                throw new InvalidOperationException("Windows rejected the new endpoint name.");
         }
         finally
         {
