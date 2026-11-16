@@ -129,7 +129,7 @@ internal sealed class VirtualMixGraph : IDisposable
         var after = Interlocked.Exchange(ref _peakAfter, 0f);
         var lowest = Interlocked.Exchange(ref _lowestGain, 1f);
         var limited = Interlocked.Exchange(ref _limitedFrames, 0);
-        var reduction = -20.0 * Math.Log10(Math.Max(lowest, 1e-6f));
+        var reduction = lowest >= 1f ? 0.0 : -20.0 * Math.Log10(Math.Max(lowest, 1e-6f));
         Log.Info($"Mix level peak={Db(after)}dBFS ({after:0.000}) beforeLimiter={Db(before)}dBFS ({before:0.000}) limiter={(_limiter != null ? "on" : "off")} maxReduction={reduction:0.00}dB limitedFrames={limited} overFullScale={clips}");
         Log.Info($"Mix health clips={clips} renderFail={renderFail} renderShort={renderShort} minPadding={minPadding} bypass={_bypass} period={_periodMs}ms");
         foreach (var (channel, tap) in _taps)

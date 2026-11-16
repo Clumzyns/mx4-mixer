@@ -862,12 +862,31 @@ public sealed class AudioEngine : IDisposable
         Replace(_capture, DataFlow.Capture);
         if (!_settingOutput)
         {
-            var current = TryDefault(DataFlow.Render);
-            if (!string.IsNullOrEmpty(current) && !SameDevice(_masterOutputId, current) && !IsVirtualRender(current))
+            // The output chosen in Mixer wins over the Windows default, which is usually the Game cable.
+            var saved = _config.MasterOutputDeviceId;
+            var chosen = !string.IsNullOrEmpty(saved) && !IsVirtualRender(saved);
+            if (chosen && _render.ContainsKey(saved!))
             {
-                _masterOutputId = current;
-                _config.MasterOutputDeviceId = current;
-                ScheduleSave();
+                if (!SameDevice(_masterOutputId, saved))
+                {
+                    _masterOutputId = saved;
+                    _routed.Clear();
+                    Log.Info("Master output is the saved device " + saved);
+                }
+            }
+            else
+            {
+                // Nothing chosen yet, or the chosen device is unplugged. Follow Windows until it returns.
+                var current = TryDefault(DataFlow.Render);
+                if (!string.IsNullOrEmpty(current) && !SameDevice(_masterOutputId, current) && !IsVirtualRender(current))
+                {
+                    _masterOutputId = current;
+                    if (!chosen)
+                    {
+                        _config.MasterOutputDeviceId = current;
+                        ScheduleSave();
+                    }
+                }
             }
         }
         if (!_settingInput)
