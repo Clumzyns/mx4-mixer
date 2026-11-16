@@ -8,7 +8,7 @@ namespace Mixer.Audio;
 
 /// <summary>
 /// Draws the playing song as 128x64 one-bit frames for the Nova Pro screen:
-/// title, artist, a progress bar, and elapsed and total time.
+/// title, artist, a segmented progress bar, and elapsed and total time, in the same style as the window.
 /// A title or artist wider than the screen scrolls. Each line is drawn once with WPF text
 /// and then moved in plain code, so a scroll step costs no text layout. Use from one STA thread.
 /// </summary>
@@ -22,20 +22,24 @@ internal sealed class SongScreen
     private const int ScrollGap = 36;
     private const int ScrollPixelsPerSecond = 30;
     private const int ScrollPauseMs = 2000;
-    private const int BarHeight = 6;
-    private const int BarInner = OledScreen.Width - 2;
+    private const int BarTop = 39;
+    private const int BarHeight = 10;
+    private const int Segments = 40;
+
     private const int MaxStripWidth = 4096;
 
+    // Chosen by eye at one bit per pixel: these two keep their letter shapes at these sizes.
     private static readonly Typeface TitleFace =
-        new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+        new(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
     private static readonly Typeface ArtistFace =
-        new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        new(new FontFamily("Cascadia Mono, Consolas"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
 
     private string? _title;
     private string? _artist;
     private Strip _titleStrip;
     private Strip _artistStrip;
     private long _scrollStart;
+    private readonly Dictionary<char, Strip> _digits = new();
 
     /// <summary>Starts the scroll from the beginning, for when the song screen comes back.</summary>
     public void Restart(long nowMs) => _scrollStart = nowMs;
@@ -44,8 +48,8 @@ internal sealed class SongScreen
     {
         if (track.Title != _title || track.Artist != _artist)
         {
-            _titleStrip = Draw(track.Title, TitleFace, 15);
-            _artistStrip = Draw(track.Artist, ArtistFace, 12);
+            _titleStrip = Draw(track.Title, TitleFace, 13);
+            _artistStrip = Draw(track.Artist, ArtistFace, 11);
             _title = track.Title;
             _artist = track.Artist;
             _scrollStart = nowMs;
@@ -59,7 +63,7 @@ internal sealed class SongScreen
             var position = track.PositionAt(clock);
             elapsed = (int)position.TotalSeconds;
             total = (int)track.Duration.TotalSeconds;
-            fill = (int)(position.Ticks * BarInner / track.Duration.Ticks);
+            fill = (int)(position.Ticks * Segments / track.Duration.Ticks);
         }
 
         var running = nowMs - _scrollStart;
@@ -79,27 +83,49 @@ internal sealed class SongScreen
         Blit(pixels, _artistStrip, frame.ArtistShift, top + _titleStrip.Height + 1);
         if (!timed) return pixels;
 
+        // An outlined bar filled with segments, the same as the display mirror in the window.
         var canvas = new OledScreen.Canvas(pixels);
-        const int barTop = 46;
-        for (var x = 0; x < OledScreen.Width; x++)
+        for (var x = Margin; x < OledScreen.Width - Margin; x++)
         {
-            canvas.Plot(x, barTop);
-            canvas.Plot(x, barTop + BarHeight - 1);
+            canvas.Plot(x, BarTop);
+            canvas.Plot(x, BarTop + BarHeight - 1);
         }
         for (var y = 0; y < BarHeight; y++)
         {
-            canvas.Plot(0, barTop + y);
-            canvas.Plot(OledScreen.Width - 1, barTop + y);
+            canvas.Plot(Margin, BarTop + y);
+            canvas.Plot(OledScreen.Width - Margin - 1, BarTop + y);
         }
-        for (var x = 0; x < Math.Clamp(frame.Fill, 0, BarInner); x++)
-            for (var y = 1; y < BarHeight - 1; y++)
-                canvas.Plot(1 + x, barTop + y);
+        for (var i = 0; i < Math.Clamp(frame.Fill, 0, Segments); i++)
+            canvas.Fill(Margin + 3 + i * 3, BarTop + 3, 2, BarHeight - 6);
 
-        const int timeTop = 56;
-        var total = Clock(frame.Total);
-        canvas.Text(0, timeTop, Clock(Math.Min(frame.Elapsed, frame.Total)));
-        canvas.Text(OledScreen.Width - (total.Length * 4 - 1), timeTop, total);
+        var timeTop = BarTop + BarHeight + 1;
+        Time(pixels, Clock(Math.Min(frame.Elapsed, frame.Total)), Margin, timeTop, fromRight: false);
+        Time(pixels, Clock(frame.Total), OledScreen.Width - Margin, timeTop, fromRight: true);
         return pixels;
+    }
+
+    /// <summary>Draws a clock from digits drawn once, so a tick of the seconds costs no text layout.</summary>
+    private void Time(bool[] pixels, string text, int x, int top, bool fromRight)
+    {
+        var width = 0;
+        foreach (var ch in text) width += Digit(ch).Width - 1;
+        var left = fromRight ? x - width : x;
+        foreach (var ch in text)
+        {
+            var glyph = Digit(ch);
+            Copy(pixels, glyph, left, top);
+            left += glyph.Width - 1;
+        }
+    }
+
+    private Strip Digit(char ch)
+    {
+        if (!_digits.TryGetValue(ch, out var glyph))
+        {
+            glyph = Draw(ch.ToString(), ArtistFace, 11);
+            _digits[ch] = glyph;
+        }
+        return glyph;
     }
 
     private static string Clock(int seconds)
@@ -169,7 +195,7 @@ internal sealed class SongScreen
 
         var pixels = new bool[width * height];
         for (var i = 0; i < pixels.Length; i++)
-            pixels[i] = raw[i * 4 + 1] >= 128;
+            pixels[i] = raw[i * 4 + 1] >= 96;
         return new Strip(pixels, width, height);
     }
 
