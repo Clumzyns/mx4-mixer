@@ -16,12 +16,14 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
     private readonly WaveFormat _format = WaveFormat.CreateIeeeFloatWaveFormat(Rate, 2);
     private readonly Dictionary<ChannelId, ChannelTap> _taps = new();
     private readonly List<WasapiOut> _ownedOutputs = new();
+    private readonly MixerConfig _config;
     private readonly object _gate = new();
     private WasapiOut? _master;
     private bool _disposed;
 
-    private VirtualMixGraph()
+    private VirtualMixGraph(MixerConfig config)
     {
+        _config = config;
         WaveFormat = _format;
     }
 
@@ -34,7 +36,7 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
         MixerConfig config,
         IReadOnlyDictionary<string, MMDevice> outputs)
     {
-        var graph = new VirtualMixGraph();
+        var graph = new VirtualMixGraph(config);
         try
         {
             foreach (var (channel, source) in captures)
@@ -92,8 +94,9 @@ internal sealed class VirtualMixGraph : IDisposable, ISampleProvider
                     right += frame[1] * tap.Volume;
                 }
 
-                buffer[offset + i * 2] = Math.Clamp(left, -1f, 1f);
-                buffer[offset + i * 2 + 1] = Math.Clamp(right, -1f, 1f);
+                var masterGain = VolumeMath.Clamp(_config.MasterVolume);
+                buffer[offset + i * 2] = Math.Clamp(left * masterGain, -1f, 1f);
+                buffer[offset + i * 2 + 1] = Math.Clamp(right * masterGain, -1f, 1f);
             }
         }
         return count;

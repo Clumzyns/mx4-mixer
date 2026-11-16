@@ -33,6 +33,7 @@ public sealed class MixerSnapshot
     public IReadOnlyList<DeviceSnapshot> Inputs { get; init; } = [];
     public string? MasterOutputId { get; init; }
     public string? MasterInputId { get; init; }
+    public float MasterVolume { get; init; } = 1f;
     public bool MicMuted { get; init; }
     public IReadOnlyList<ChannelSnapshot> Channels { get; init; } = [];
     public IReadOnlyList<AppSnapshot> Apps { get; init; } = [];

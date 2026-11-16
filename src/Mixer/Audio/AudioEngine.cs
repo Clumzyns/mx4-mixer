@@ -122,6 +122,21 @@ public sealed class AudioEngine : IDisposable
         Notify();
     }
 
+    public void SetMasterVolume(float volume)
+    {
+        var next = VolumeMath.Clamp(volume);
+        if (Math.Abs(_config.MasterVolume - next) <= 0.0005f)
+        {
+            ScheduleSave();
+            return;
+        }
+
+        _config.MasterVolume = next;
+        QueueGain();
+        ScheduleSave();
+        Notify();
+    }
+
     public void SetChannelVolume(ChannelId id, float volume)
     {
         _config.Channel(id).Volume = VolumeMath.Clamp(volume);
@@ -425,7 +440,9 @@ public sealed class AudioEngine : IDisposable
                 _memory[session.InstanceId] = memory;
             }
 
-            var scale = _virtualMixActive ? 1f : settings.Volume;
+            var throughMix = _virtualMixActive && _virtualInputs.ContainsKey(channel);
+            var channelScale = _virtualMixActive ? 1f : settings.Volume;
+            var scale = throughMix ? channelScale : channelScale * VolumeMath.Clamp(_config.MasterVolume);
             var external = memory.HasWritten && Math.Abs(current - memory.LastVolume) > 0.02f;
             if (external && scale > 0.001f)
             {
@@ -705,6 +722,7 @@ public sealed class AudioEngine : IDisposable
             Inputs = inputs,
             MasterOutputId = _masterOutputId,
             MasterInputId = _masterInputId,
+            MasterVolume = _config.MasterVolume,
             MicMuted = _micMuted,
             Channels = channels,
             Apps = apps,

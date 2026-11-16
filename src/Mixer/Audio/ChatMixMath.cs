@@ -23,31 +23,16 @@ public static class ChatMixMath
         return 100 - (int)Math.Round(game / 2.0, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>
-    /// Maps an absolute knob position onto 0-100 from the lowest and highest values seen.
-    /// Returns false until two different positions have been observed.
-    /// Low maps to Game, high maps to Chat.
-    /// </summary>
-    public static bool TryMapKnob(int value, ref int? min, ref int? max, out int balance, out bool rangeChanged)
-    {
-        value = Math.Clamp(value, 0, 255);
-        rangeChanged = false;
-        if (min is null || value < min)
-        {
-            min = value;
-            rangeChanged = true;
-        }
-        if (max is null || value > max)
-        {
-            max = value;
-            rangeChanged = true;
-        }
+    public const int VolumeKnobStepPercent = 2;
 
-        balance = 50;
-        if (min is null || max is null || max.Value == min.Value) return false;
-        balance = (int)Math.Round((value - min.Value) * 100.0 / (max.Value - min.Value), MidpointRounding.AwayFromZero);
-        balance = Math.Clamp(balance, 0, 100);
-        return true;
+    /// <summary>
+    /// Moves master volume by a fixed percent per knob step. Positive delta is louder
+    /// unless invert is set. The result is clamped to 0-100.
+    /// </summary>
+    public static int ApplyVolumeStep(int volumePercent, int knobDelta, bool invert)
+    {
+        var steps = invert ? -knobDelta : knobDelta;
+        return Math.Clamp(volumePercent + steps * VolumeKnobStepPercent, 0, 100);
     }
 
     public static int Percent(float volume)

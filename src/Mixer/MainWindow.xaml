@@ -284,10 +284,19 @@
     <Grid Grid.Row="5" Margin="20,6,20,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,8,0">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+        <TextBlock Text="MASTER" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
+        <controls:Fader Width="160" Height="22" Orientation="Horizontal" VerticalAlignment="Center"
+                        Value="{Binding MasterVolume, Mode=TwoWay}"
+                        ToolTip="Master output volume. The base station knob changes this by 2% per step."/>
+        <TextBlock Text="{Binding MasterVolumeLabel, Mode=OneWay}" Width="36" Margin="8,0,0,0" VerticalAlignment="Center"
+                   FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" TextAlignment="Right"/>
+      </StackPanel>
+      <Ellipse Grid.Column="1" Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,8,0">
         <Ellipse.Style>
           <Style TargetType="Ellipse">
             <Setter Property="Fill" Value="#5C6573"/>
@@ -299,8 +308,8 @@
           </Style>
         </Ellipse.Style>
       </Ellipse>
-      <TextBlock Grid.Column="1" Text="{Binding Status}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,12,0"/>
-      <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
+      <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,12,0"/>
+      <TextBlock Grid.Column="3" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
     </Grid>
 
     <Border Grid.RowSpan="6" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
@@ -311,10 +320,10 @@
           <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource FaintBrush}" Margin="0,4,0,16"/>
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
-          <CheckBox Content="Use base station knob as ChatMix (07 25)" IsChecked="{Binding UseKnobAsChatMix}"
-                    ToolTip="The wired Nova Pro knob sends 07 25, a position rather than game and chat percents. Turn this on to drive the slider from that knob. Mixer learns the lowest and highest values it sees. Low is Game, high is Chat."/>
+          <CheckBox Content="Invert knob" IsChecked="{Binding InvertVolumeKnob}"
+                    ToolTip="The base station volume knob sends 07 25. Each step changes master volume by 2%. Turn this on if turning the knob up makes the master quieter."/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
-                     Text="Leave this off unless the last report is 07 25 when you turn the mix knob. Real ChatMix reports are 07 45 and move the slider on their own."/>
+                     Text="The base station knob controls master volume. A higher report is louder, 2% per step, clamped from 0 to 100. The first report after connect is ignored. ChatMix stays on 07 45."/>
           <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12"
                      Text="Install Virtual Audio Cable, open its control panel, and set the cable count to 4. Apps play into each line. Mixer records that line and sends the mix to the master output."/>

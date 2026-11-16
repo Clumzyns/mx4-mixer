@@ -9,7 +9,8 @@ namespace Mixer.Audio;
 /// Wired GameDAC (PID 0x12CB/0x12CD) accepts init on MI_04 COL01 (usage page 0xFFC0):
 /// 06 10, 06 20, 06 80, 06 18, 06 49 01, 06 8D 01. COL02 (usage page 0xFF00) is input-only.
 /// ChatMix, once enabled with 06 49 01, is report 07 45 GG CC (game %, chat %).
-/// The wired knob is a separate report, 07 25 NN, and is not ChatMix unless the user opts in.
+/// The wired volume knob is a separate report, 07 25 NN. Each step nudges master volume.
+/// The first 07 25 after connect is only a baseline.
 /// Both MI_04 collections are read at the same time.
 /// </summary>
 public sealed class ChatMixMonitor : IDisposable
@@ -39,8 +40,8 @@ public sealed class ChatMixMonitor : IDisposable
     private readonly ManualResetEventSlim _wake = new(false);
     private readonly Dictionary<string, string> _unknownHex = new(StringComparer.Ordinal);
     private bool _enabled = true;
-    private bool _useKnob;
     private bool _disposed;
+    private bool _knobReady;
     private bool _statusConnected;
     private string _statusDetail = "";
     private int _lastGame = -1;
@@ -69,34 +70,7 @@ public sealed class ChatMixMonitor : IDisposable
         }
     }
 
-    public bool UseKnobAsChatMix
-    {
-        get => Volatile.Read(ref _useKnob);
-        set => Volatile.Write(ref _useKnob, value);
-    }
-
     public void Start() => _thread.Start();
-
-    public void ReplayKnob()
-    {
-        ChatMixReading? reading = null;
-        lock (_gate)
-        {
-            if (_lastKnob < 0 || string.IsNullOrEmpty(_lastRaw)) return;
-            reading = new ChatMixReading(
-                true,
-                true,
-                ChatMixReportKind.Knob,
-                0,
-                0,
-                _lastKnob,
-                $"Knob report 07 25 value {_lastKnob}.",
-                _lastRaw);
-        }
-
-        if (reading is ChatMixReading update)
-            Reading?.Invoke(this, update);
-    }
 
     public void Dispose()
     {
@@ -158,6 +132,12 @@ public sealed class ChatMixMonitor : IDisposable
 
     private void Pump(List<HidDevice> devices)
     {
+        lock (_gate)
+        {
+            _knobReady = false;
+            _lastKnob = -1;
+        }
+
         var running = 1;
         var streams = new List<(HidDevice Device, HidStream Stream, bool Wrote)>();
         var threads = new List<Thread>();
@@ -309,28 +289,32 @@ public sealed class ChatMixMonitor : IDisposable
                     ? $"ChatMix report 07 45 game={game} chat={chat} ({raw})"
                     : $"ChatMix report 45 game={game} chat={chat} ({raw})";
             }
-            return new ChatMixReading(true, true, ChatMixReportKind.Levels, game, chat, _lastKnob,
+            return new ChatMixReading(true, true, ChatMixReportKind.Levels, game, chat, _lastKnob, 0, false,
                 $"Dial {game} game / {chat} chat.", raw);
         }
 
         if (kind == ChatMixReportKind.Knob)
         {
-            var apply = UseKnobAsChatMix;
-            if (_lastRaw == raw && knob == _lastKnob) return null;
-            var changed = knob != _lastKnob;
-            _lastKnob = knob;
-            _lastRaw = raw;
-            if (changed)
+            if (!_knobReady)
             {
-                log = apply
-                    ? $"ChatMix knob report 07 25 value={knob} ({raw})"
-                    : $"ChatMix knob report 07 25 value={knob} ignored; knob-as-ChatMix is off ({raw})";
+                _knobReady = true;
+                _lastKnob = knob;
+                _lastRaw = raw;
+                log = $"ChatMix volume knob baseline 07 25 value={knob} (ignored) ({raw})";
+                return new ChatMixReading(true, false, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, 0, true,
+                    $"Volume knob baseline {knob}.", raw);
             }
 
-            var detail = apply
-                ? $"Knob report 07 25 value {knob}."
-                : $"Knob report 07 25 value {knob}. Not ChatMix unless enabled in Settings.";
-            return new ChatMixReading(true, apply, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, detail, raw);
+            var delta = knob - _lastKnob;
+            if (_lastRaw == raw && delta == 0) return null;
+            _lastKnob = knob;
+            _lastRaw = raw;
+            if (delta != 0)
+                log = $"ChatMix volume knob 07 25 value={knob} delta={delta.ToString("+#;-#;0")} ({raw})";
+            var detail = delta == 0
+                ? $"Volume knob {knob}."
+                : $"Volume knob {knob} delta {delta.ToString("+#;-#;0")}.";
+            return new ChatMixReading(true, false, ChatMixReportKind.Knob, _lastGame, _lastChat, knob, delta, false, detail, raw);
         }
 
         var id = buffer.Length > 0 ? buffer[0] : (byte)0;
@@ -342,7 +326,7 @@ public sealed class ChatMixMonitor : IDisposable
 
         if (_lastRaw == raw) return null;
         _lastRaw = raw;
-        return new ChatMixReading(true, false, ChatMixReportKind.Unknown, _lastGame, _lastChat, _lastKnob,
+        return new ChatMixReading(true, false, ChatMixReportKind.Unknown, _lastGame, _lastChat, _lastKnob, 0, false,
             $"Unrecognized report id {label}.", raw);
     }
 
@@ -516,7 +500,7 @@ public sealed class ChatMixMonitor : IDisposable
             return;
         _statusConnected = connected;
         _statusDetail = detail;
-        Reading?.Invoke(this, new ChatMixReading(connected, hasLevels, kind, game, chat, knob, detail, raw));
+        Reading?.Invoke(this, new ChatMixReading(connected, hasLevels, kind, game, chat, knob, 0, false, detail, raw));
     }
 }
 
@@ -535,5 +519,7 @@ public readonly record struct ChatMixReading(
     int Game,
     int Chat,
     int Knob,
+    int KnobDelta,
+    bool KnobBaseline,
     string Detail,
     string RawReport);

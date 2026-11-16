@@ -24,12 +24,13 @@ public sealed class MainViewModel : ObservableObject
     private bool _settingsOpen;
     private bool _chatMixEnabled;
     private bool _chatMixConnected;
-    private bool _useKnobAsChatMix;
     private bool _balanceArmed;
     private int _balanceSync;
     private double _chatMixBalance = 50;
-    private int? _knobMin;
-    private int? _knobMax;
+    private bool _masterArmed;
+    private int _masterSync;
+    private double _masterVolume = 100;
+    private bool _invertVolumeKnob;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
     private string _chatMixDetail = "Looking for the Nova Pro base station…";
@@ -49,11 +50,9 @@ public sealed class MainViewModel : ObservableObject
         _startWithWindows = config.StartWithWindows;
         _startMinimized = config.StartMinimized;
         _chatMixEnabled = config.ChatMixEnabled;
-        _useKnobAsChatMix = config.UseKnobAsChatMix;
-        _chatMix.UseKnobAsChatMix = config.UseKnobAsChatMix;
-        _knobMin = config.ChatMixKnobMin;
-        _knobMax = config.ChatMixKnobMax;
         _chatMixBalance = Math.Clamp(config.ChatMixBalance, 0, 100);
+        _masterVolume = ChatMixMath.Percent(config.MasterVolume);
+        _invertVolumeKnob = config.InvertVolumeKnob;
         _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
         _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
         Channels = new ObservableCollection<ChannelViewModel>(
@@ -176,17 +175,50 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public bool UseKnobAsChatMix
+    public bool InvertVolumeKnob
     {
-        get => _useKnobAsChatMix;
+        get => _invertVolumeKnob;
         set
         {
-            if (!Set(ref _useKnobAsChatMix, value)) return;
-            _config.UseKnobAsChatMix = value;
-            _chatMix.UseKnobAsChatMix = value;
+            if (!Set(ref _invertVolumeKnob, value)) return;
+            _config.InvertVolumeKnob = value;
             try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
-            if (value)
-                _chatMix.ReplayKnob();
+        }
+    }
+
+    public double MasterVolume
+    {
+        get => _masterVolume;
+        set
+        {
+            var percent = (int)Math.Round(double.IsFinite(value) ? value : 100, MidpointRounding.AwayFromZero);
+            percent = Math.Clamp(percent, 0, 100);
+            if (!IsSyncing && _masterSync == 0 && !_masterArmed) return;
+            if (Math.Abs(_masterVolume - percent) < 0.05) return;
+            _masterVolume = percent;
+            Raise(nameof(MasterVolume));
+            Raise(nameof(MasterVolumeLabel));
+            if (IsSyncing || _masterSync > 0) return;
+            _engine.SetMasterVolume(percent / 100f);
+        }
+    }
+
+    public string MasterVolumeLabel => $"{Math.Round(_masterVolume):0}";
+
+    public void ArmMasterFader()
+    {
+        var percent = ChatMixMath.Percent(_config.MasterVolume);
+        _masterArmed = true;
+        if (Math.Abs(_masterVolume - percent) > 0.01)
+        {
+            _masterSync++;
+            try { MasterVolume = percent; }
+            finally { _masterSync--; }
+        }
+        else
+        {
+            Raise(nameof(MasterVolume));
+            Raise(nameof(MasterVolumeLabel));
         }
     }
 
@@ -271,26 +303,18 @@ public sealed class MainViewModel : ObservableObject
 
         if (reading.Kind == ChatMixReportKind.Knob)
         {
-            var mapped = ChatMixMath.TryMapKnob(reading.Knob, ref _knobMin, ref _knobMax, out var balance, out var rangeChanged);
-            if (!UseKnobAsChatMix || !mapped)
+            if (reading.KnobBaseline || reading.KnobDelta == 0)
             {
-                ChatMixDetail = UseKnobAsChatMix
-                    ? $"Knob value {reading.Knob}. Turn it both ways to learn its range."
-                    : reading.Detail;
-                if (UseKnobAsChatMix && rangeChanged)
-                {
-                    _config.ChatMixKnobMin = _knobMin;
-                    _config.ChatMixKnobMax = _knobMax;
-                    try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
-                }
+                ChatMixDetail = reading.Detail;
                 return;
             }
 
-            _config.ChatMixKnobMin = _knobMin;
-            _config.ChatMixKnobMax = _knobMax;
-            var (game, chat) = ChatMixMath.ToLevels(balance);
-            PushBalance(balance, game, chat);
-            ChatMixDetail = $"Knob {reading.Knob} mapped to {balance} (seen {_knobMin}–{_knobMax}). Low is Game, high is Chat.";
+            var current = (int)Math.Round(_masterVolume);
+            var next = ChatMixMath.ApplyVolumeStep(current, reading.KnobDelta, InvertVolumeKnob);
+            SetMasterPercent(next);
+            var change = next - current;
+            Log.Info($"Master volume {next} from knob 07 25 value={reading.Knob} delta={reading.KnobDelta.ToString("+#;-#;0")}");
+            ChatMixDetail = $"Volume knob {reading.Knob} {change.ToString("+#;-#;0")}% → master {next}.";
             return;
         }
 
@@ -301,6 +325,15 @@ public sealed class MainViewModel : ObservableObject
         }
 
         ChatMixDetail = reading.Detail;
+    }
+
+    private void SetMasterPercent(int percent)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        _masterSync++;
+        try { MasterVolume = percent; }
+        finally { _masterSync--; }
+        _engine.SetMasterVolume(percent / 100f);
     }
 
     private void PushBalance(int balance, int game, int chat)
@@ -361,6 +394,7 @@ public sealed class MainViewModel : ObservableObject
             RebuildInputs(snap.Inputs);
             SelectedOutputId = snap.MasterOutputId;
             SelectedInputId = snap.MasterInputId;
+            MasterVolume = ChatMixMath.Percent(snap.MasterVolume);
             MicMuted = snap.MicMuted;
             Status = snap.Status;
             RoutingAvailable = snap.RoutingAvailable;

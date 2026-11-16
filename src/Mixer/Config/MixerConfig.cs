@@ -17,10 +17,10 @@ public sealed class MixerConfig
     public bool ChatMixEnabled { get; set; } = true;
     /// <summary>0 is Game only, 100 is Chat only, 50 keeps both full.</summary>
     public int ChatMixBalance { get; set; } = 50;
-    /// <summary>When set, report 07 25 (the wired base-station knob) drives ChatMix. Off by default.</summary>
-    public bool UseKnobAsChatMix { get; set; }
-    public int? ChatMixKnobMin { get; set; }
-    public int? ChatMixKnobMax { get; set; }
+    /// <summary>Master output gain, 0-1. The base-station volume knob nudges this.</summary>
+    public float MasterVolume { get; set; } = 1f;
+    /// <summary>When set, a rising 07 25 position turns master volume down.</summary>
+    public bool InvertVolumeKnob { get; set; }
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -60,13 +60,7 @@ public sealed class MixerConfig
             CableAssignments.Remove(key);
 
         ChatMixBalance = Math.Clamp(ChatMixBalance, 0, 100);
-        if (ChatMixKnobMin is int low && (low < 0 || low > 255)) ChatMixKnobMin = null;
-        if (ChatMixKnobMax is int high && (high < 0 || high > 255)) ChatMixKnobMax = null;
-        if (ChatMixKnobMin is int min && ChatMixKnobMax is int max && min > max)
-        {
-            ChatMixKnobMin = max;
-            ChatMixKnobMax = min;
-        }
+        MasterVolume = VolumeMath.NormalizeStored(MasterVolume);
     }
 
     public ChannelSettings Channel(ChannelId id)
