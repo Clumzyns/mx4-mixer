@@ -36,6 +36,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _customDisplay;
     private int _mixLatencyMs = 20;
     private bool _gameStraightThrough;
+    private bool _limiterEnabled;
     private int _lastKnobPosition = -1;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
@@ -64,6 +65,7 @@ public sealed class MainViewModel : ObservableObject
         _customDisplay = config.CustomDisplay;
         _mixLatencyMs = config.MixLatencyMs is 10 or 40 ? config.MixLatencyMs : 20;
         _gameStraightThrough = config.GameStraightThrough;
+        _limiterEnabled = config.LimiterEnabled;
         _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
         _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
         Channels = new ObservableCollection<ChannelViewModel>(
@@ -248,6 +250,18 @@ public sealed class MainViewModel : ObservableObject
             Raise(nameof(MixLatencyMs));
             _config.MixLatencyMs = ms;
             _engine.SetMixLatency(ms);
+            ConfigStore.SaveSoon(_config);
+        }
+    }
+
+    public bool LimiterEnabled
+    {
+        get => _limiterEnabled;
+        set
+        {
+            if (!Set(ref _limiterEnabled, value)) return;
+            _config.LimiterEnabled = value;
+            _engine.SetLimiterEnabled(value);
             ConfigStore.SaveSoon(_config);
         }
     }

@@ -30,6 +30,8 @@ public sealed class MixerConfig
     public int MixLatencyMs { get; set; } = 20;
     /// <summary>Debug: send the Game cable to the master output without summing the other channels.</summary>
     public bool GameStraightThrough { get; set; }
+    /// <summary>Lookahead peak limiter on the final mix. It only acts when the sum would pass full scale.</summary>
+    public bool LimiterEnabled { get; set; } = true;
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);

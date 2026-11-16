@@ -383,6 +383,13 @@ public sealed class AudioEngine : IDisposable
         RequestScanSoon(immediate: true);
     });
 
+    public void SetLimiterEnabled(bool enabled) => Post(() =>
+    {
+        _config.LimiterEnabled = enabled;
+        ScheduleSave();
+        RequestScanSoon(immediate: true);
+    });
+
     public void SetCable(ChannelId channel, string renderId)
     {
         if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)) return;
@@ -1369,6 +1376,7 @@ public sealed class AudioEngine : IDisposable
             ? _masterOutputId + "|" + string.Join(",", _virtualCaptures.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value))
               + "|" + string.Join(",", ChannelIds.All.Select(id => id + ":" + (_config.Channel(id).DeviceId ?? "")))
               + "|lat=" + latency + "|bypass=" + (_config.GameStraightThrough ? 1 : 0)
+              + "|limit=" + (_config.LimiterEnabled ? 1 : 0)
             : "";
         _virtualMixActive = canMix;
         if (signature == _mixSignature) return;

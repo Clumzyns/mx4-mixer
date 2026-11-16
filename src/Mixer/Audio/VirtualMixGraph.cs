@@ -25,15 +25,22 @@ internal sealed class VirtualMixGraph : IDisposable
     private float[] _mixLeft = new float[2048];
     private float[] _mixRight = new float[2048];
     private float _rampMaster = 1f;
+    private readonly bool _limit;
+    private PeakLimiter? _limiter;
     private int _clips;
+    private int _limitedFrames;
+    private float _peakBefore;
+    private float _peakAfter;
+    private float _lowestGain = 1f;
     private long _lastDriftLog;
     private bool _disposed;
 
-    private VirtualMixGraph(LiveMix live, int periodMs, bool bypass)
+    private VirtualMixGraph(LiveMix live, int periodMs, bool bypass, bool limit)
     {
         _live = live;
         _periodMs = periodMs;
         _bypass = bypass;
+        _limit = limit && !bypass;
     }
 
     public static VirtualMixGraph? TryStart(
@@ -45,7 +52,7 @@ internal sealed class VirtualMixGraph : IDisposable
         LiveMix live)
     {
         var period = config.MixLatencyMs is 10 or 40 ? config.MixLatencyMs : 20;
-        var graph = new VirtualMixGraph(live, period, config.GameStraightThrough);
+        var graph = new VirtualMixGraph(live, period, config.GameStraightThrough, config.LimiterEnabled);
         try
         {
             foreach (var (channel, source) in captures)
@@ -74,6 +81,15 @@ internal sealed class VirtualMixGraph : IDisposable
             }
 
             var render = graph.OpenClient(master, capture: false, "render");
+            if (graph._limit)
+            {
+                graph._limiter = new PeakLimiter(render.SampleRate);
+                Log.Info($"Mix limiter on, ceiling {Db(PeakLimiter.Ceiling)} dBFS, lookahead {graph._limiter.LookaheadFrames} frames ({PeakLimiter.LookaheadMs:0.#}ms), release {PeakLimiter.ReleaseMs:0}ms, linked stereo.");
+            }
+            else
+            {
+                Log.Info("Mix limiter off. The sum goes to the device unprocessed.");
+            }
             graph._pumps.Add(graph.StartRender(render));
             Log.Info(config.GameStraightThrough
                 ? $"Mix bypasses to Game only, period {period}ms."
@@ -109,6 +125,12 @@ internal sealed class VirtualMixGraph : IDisposable
             var padding = pump.TakeMinPadding();
             if (padding >= 0) minPadding = padding;
         }
+        var before = Interlocked.Exchange(ref _peakBefore, 0f);
+        var after = Interlocked.Exchange(ref _peakAfter, 0f);
+        var lowest = Interlocked.Exchange(ref _lowestGain, 1f);
+        var limited = Interlocked.Exchange(ref _limitedFrames, 0);
+        var reduction = -20.0 * Math.Log10(Math.Max(lowest, 1e-6f));
+        Log.Info($"Mix level peak={Db(after)}dBFS ({after:0.000}) beforeLimiter={Db(before)}dBFS ({before:0.000}) limiter={(_limiter != null ? "on" : "off")} maxReduction={reduction:0.00}dB limitedFrames={limited} overFullScale={clips}");
         Log.Info($"Mix health clips={clips} renderFail={renderFail} renderShort={renderShort} minPadding={minPadding} bypass={_bypass} period={_periodMs}ms");
         foreach (var (channel, tap) in _taps)
         {
@@ -331,38 +353,52 @@ internal sealed class VirtualMixGraph : IDisposable
     private void WriteOutput(float[]? dest, int frames, int channels, WaveFormat format, bool limit, float masterStart, float masterEnd)
     {
         var clips = 0;
+        var before = 0f;
         for (var i = 0; i < frames; i++)
         {
             var master = frames == 1 ? masterEnd : masterStart + (masterEnd - masterStart) * ((i + 1f) / frames);
             var left = _mixLeft[i] * master;
             var right = _mixRight[i] * master;
-            if (limit)
+            _mixLeft[i] = left;
+            _mixRight[i] = right;
+            var peak = Math.Max(Math.Abs(left), Math.Abs(right));
+            if (peak > before) before = peak;
+            if (peak > 1f) clips++;
+        }
+
+        var after = before;
+        if (limit && _limiter != null)
+        {
+            var reduced = 0;
+            var lowest = _limiter.Process(_mixLeft, _mixRight, frames, ref reduced);
+            if (reduced > 0)
             {
-                left = SoftLimit(left, ref clips);
-                right = SoftLimit(right, ref clips);
+                Interlocked.Add(ref _limitedFrames, reduced);
+                if (lowest < Volatile.Read(ref _lowestGain)) Volatile.Write(ref _lowestGain, lowest);
             }
-            if (dest == null)
+            after = 0f;
+            for (var i = 0; i < frames; i++)
             {
-                _mixLeft[i] = left;
-                _mixRight[i] = right;
-            }
-            else
-            {
-                Pack(dest, i, channels, left, right);
+                var peak = Math.Max(Math.Abs(_mixLeft[i]), Math.Abs(_mixRight[i]));
+                if (peak > after) after = peak;
             }
         }
+
+        if (dest != null)
+        {
+            for (var i = 0; i < frames; i++)
+                Pack(dest, i, channels, _mixLeft[i], _mixRight[i]);
+        }
+
+        if (before > Volatile.Read(ref _peakBefore)) Volatile.Write(ref _peakBefore, before);
+        if (after > Volatile.Read(ref _peakAfter)) Volatile.Write(ref _peakAfter, after);
         if (clips > 0) Interlocked.Add(ref _clips, clips);
     }
 
-    private static float SoftLimit(float sample, ref int clips)
-    {
-        var abs = Math.Abs(sample);
-        if (abs <= 0.9f) return sample;
-        if (abs > 1f) clips++;
-        var sign = Math.Sign(sample);
-        var over = abs - 0.9f;
-        return sign * (0.9f + 0.1f * over / (1f + over));
-    }
+    private static string Db(float amplitude) =>
+        amplitude <= 0.000001f
+            ? "-inf"
+            : (20.0 * Math.Log10(amplitude)).ToString("+0.0;-0.0;0.0", System.Globalization.CultureInfo.InvariantCulture);
 
     private static void Pack(float[] dest, int frame, int channels, float left, float right)
     {
