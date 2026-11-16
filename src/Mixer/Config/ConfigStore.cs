@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Mixer.Audio;
 
 namespace Mixer.Config;
 
@@ -33,6 +34,12 @@ public static class ConfigStore
             var json = File.ReadAllText(FilePath);
             var config = JsonSerializer.Deserialize<MixerConfig>(json, Json) ?? MixerConfig.CreateDefault();
             config.EnsureShape();
+            if (!HasProperty(json, "chatMixBalance"))
+            {
+                config.ChatMixBalance = ChatMixMath.FromLevels(
+                    ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume),
+                    ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume));
+            }
             return config;
         }
         catch (Exception ex)
@@ -53,6 +60,19 @@ public static class ConfigStore
         var temp = FilePath + ".tmp";
         File.WriteAllText(temp, json);
         File.Move(temp, FilePath, overwrite: true);
+    }
+
+    private static bool HasProperty(string json, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty(name, out _);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void TryQuarantine()

@@ -269,4 +269,55 @@
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="Margin" Value="0,8,0,0"/>
   </Style>
+
+  <Style x:Key="BalanceRepeat" TargetType="RepeatButton">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Opacity" Value="0"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RepeatButton">
+          <Border Background="Transparent"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="BalanceSlider" TargetType="Slider">
+    <Setter Property="Minimum" Value="0"/>
+    <Setter Property="Maximum" Value="100"/>
+    <Setter Property="SmallChange" Value="1"/>
+    <Setter Property="LargeChange" Value="5"/>
+    <Setter Property="TickFrequency" Value="1"/>
+    <Setter Property="IsSnapToTickEnabled" Value="True"/>
+    <Setter Property="IsMoveToPointEnabled" Value="True"/>
+    <Setter Property="Focusable" Value="True"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Slider">
+          <Grid VerticalAlignment="Center" Height="22">
+            <Border Height="4" VerticalAlignment="Center" CornerRadius="2" Background="#2A3140"/>
+            <Track x:Name="PART_Track">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Style="{StaticResource BalanceRepeat}" Command="Slider.DecreaseLarge"/>
+              </Track.DecreaseRepeatButton>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Style="{StaticResource BalanceRepeat}" Command="Slider.IncreaseLarge"/>
+              </Track.IncreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Width="14" Height="22" Focusable="False" OverridesDefaultStyle="True">
+                  <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                      <Border Background="#B6F23A" CornerRadius="4" Width="14" Height="22"/>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Track.Thumb>
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
 </ResourceDictionary>

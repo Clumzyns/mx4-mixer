@@ -15,6 +15,12 @@ public sealed class MixerConfig
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
     public bool ChatMixEnabled { get; set; } = true;
+    /// <summary>0 is Game only, 100 is Chat only, 50 keeps both full.</summary>
+    public int ChatMixBalance { get; set; } = 50;
+    /// <summary>When set, report 07 25 (the wired base-station knob) drives ChatMix. Off by default.</summary>
+    public bool UseKnobAsChatMix { get; set; }
+    public int? ChatMixKnobMin { get; set; }
+    public int? ChatMixKnobMax { get; set; }
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +58,15 @@ public sealed class MixerConfig
         CableAssignments = Normalize(CableAssignments, static value => value?.Trim() ?? "");
         foreach (var key in CableAssignments.Where(pair => string.IsNullOrWhiteSpace(pair.Value)).Select(pair => pair.Key).ToList())
             CableAssignments.Remove(key);
+
+        ChatMixBalance = Math.Clamp(ChatMixBalance, 0, 100);
+        if (ChatMixKnobMin is int low && (low < 0 || low > 255)) ChatMixKnobMin = null;
+        if (ChatMixKnobMax is int high && (high < 0 || high > 255)) ChatMixKnobMax = null;
+        if (ChatMixKnobMin is int min && ChatMixKnobMax is int max && min > max)
+        {
+            ChatMixKnobMin = max;
+            ChatMixKnobMax = min;
+        }
     }
 
     public ChannelSettings Channel(ChannelId id)

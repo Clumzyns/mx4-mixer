@@ -32,7 +32,9 @@ That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the mac
 - The top bar picks the Windows default speakers and microphone for the console, multimedia, and communications roles.
 - The mic button mutes that microphone. The bar next to it is the live input level.
 - Virtual Audio Cable lines are the channel inputs. Mixer records each cable, applies the faders, and plays the mix to the master output.
-- ChatMix reads the Nova Pro dial on USB interface 4 (`0x06 0x49 0x01` and `0x06 0x8D 0x01`). Game and Chat follow the dial. Quit SteelSeries GG first.
+- The ChatMix slider at the bottom of the window sets Game and Chat. Center keeps both at full volume, the Game end is game only, and the Chat end is chat only. It works with no base station attached. The position is stored as `chatMixBalance` in `%APPDATA%\Mixer\config.json`.
+- ChatMix on the Nova Pro is USB report `07 45` (game %, chat %) on interface 4, after `06 49 01`. Mixer reads both MI_04 collections at once and only sends the init writes to the collection that accepts them (usage page `0xFFC0`). A `07 45` report moves the slider. Quit SteelSeries GG first.
+- The wired base-station knob reports `07 25` plus a position. That is not used as ChatMix unless Settings has "Use base station knob as ChatMix (07 25)" turned on. The range is learned from the lowest and highest positions seen. The last raw report is shown under the slider.
 - **Master mix** keeps a channel in that mix. Any other device on the channel plays that channel there instead.
 - Drag an app chip onto a column, or use the menu on the chip. Discord, TeamSpeak, Spotify, Chrome, Firefox, Edge, and VLC start on Chat or Media. Everything else starts on System.
 - Settings are stored in `%APPDATA%\Mixer\config.json`.
@@ -46,7 +48,7 @@ That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the mac
 - System Sounds have no process id, so they can be turned up or down but not sent to a chosen device.
 - Some elevated or protected processes hide their program name. Those show up as a process id until the path is readable.
 - Channel volume changes the app's session volume, not the hardware knob on the amp.
-- ChatMix supports the Nova Pro wired GameDAC (USB product ids 0x12CB and 0x12CD) and the Nova Pro Wireless base station (0x12E0, 0x12E5, and 0x225D). Other SteelSeries dials are not read.
+- ChatMix supports the Nova Pro wired GameDAC (USB product ids 0x12CB and 0x12CD) and the Nova Pro Wireless base station (0x12E0, 0x12E5, and 0x225D). Other SteelSeries dials are not read. Unrecognized report ids are written to `%APPDATA%\Mixer\mixer.log` and the latest bytes stay on screen.
 - SteelSeries GG must not be running. It takes the same USB connection, and then the dial never reaches Mixer.
 - The dial is not mixed inside the DAC. Mixer applies it while mixing Sonar's channels into the master output.
 - The published exe is large because it includes the .NET 8 runtime.

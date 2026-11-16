@@ -54,7 +54,11 @@ public partial class App : System.Windows.Application
         {
             _config = ConfigStore.Load();
             _engine = new AudioEngine(_config);
-            _chatMix = new ChatMixMonitor { Enabled = _config.ChatMixEnabled };
+            _chatMix = new ChatMixMonitor
+            {
+                Enabled = _config.ChatMixEnabled,
+                UseKnobAsChatMix = _config.UseKnobAsChatMix
+            };
             var viewModel = new MainViewModel(_engine, _config, _chatMix);
             _chatMix.Reading += (_, reading) => Dispatcher.BeginInvoke(() => viewModel.OnChatMix(reading));
             _window = new MainWindow(viewModel);

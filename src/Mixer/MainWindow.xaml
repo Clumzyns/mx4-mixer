@@ -5,8 +5,8 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Mixer"
         Icon="pack://application:,,,/Assets/mixer.ico"
-        Width="1240" Height="800"
-        MinWidth="980" MinHeight="680"
+        Width="1240" Height="860"
+        MinWidth="980" MinHeight="740"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResize"
@@ -17,7 +17,8 @@
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"
-        TextOptions.TextRenderingMode="ClearType">
+        TextOptions.TextRenderingMode="ClearType"
+        Loaded="Window_Loaded">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="8"/>
   </shell:WindowChrome.WindowChrome>
@@ -27,6 +28,7 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
@@ -99,7 +101,7 @@
           </Ellipse.Style>
         </Ellipse>
         <TextBlock Grid.Column="1" Text="CHATMIX" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-        <CheckBox Grid.Column="2" Content="On" IsChecked="{Binding ChatMixEnabled}" Margin="0,0,14,0" VerticalAlignment="Center" ToolTip="Read the Nova Pro dial and drive the Game and Chat faders"/>
+        <CheckBox Grid.Column="2" Content="On" IsChecked="{Binding ChatMixEnabled}" Margin="0,0,14,0" VerticalAlignment="Center" ToolTip="Listen for Nova Pro ChatMix reports (07 45). The slider below works while this is off."/>
         <TextBlock Grid.Column="3" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{StaticResource MutedBrush}" FontSize="12">
           <Run Text="{Binding ChatMixReadout, Mode=OneWay}" FontWeight="SemiBold" Foreground="#F2F4F6"/>
           <Run Text="   "/>
@@ -249,7 +251,37 @@
       </ItemsControl>
     </ScrollViewer>
 
-    <Grid Grid.Row="4" Margin="20,6,20,10">
+    <Border Grid.Row="4" Margin="16,0,16,8" Padding="14,10" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="56"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="56"/>
+            <ColumnDefinition Width="200"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="GAME" FontSize="11" FontWeight="SemiBold" Foreground="#B6F23A" VerticalAlignment="Center"/>
+          <Grid Grid.Column="1" Height="28" Margin="8,0">
+            <Border Width="2" Height="12" Background="#5C6573" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            <Slider Style="{StaticResource BalanceSlider}" VerticalAlignment="Center"
+                    Value="{Binding ChatMixBalance, Mode=TwoWay}"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                    ToolTip="Game and Chat balance. Center keeps both at full volume. Works with or without the base station."/>
+          </Grid>
+          <TextBlock Grid.Column="2" Text="CHAT" FontSize="11" FontWeight="SemiBold" Foreground="#7AD7FF" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+          <TextBlock Grid.Column="3" Text="{Binding ChatMixBalanceLabel, Mode=OneWay}" Margin="14,0,0,0" VerticalAlignment="Center"
+                     FontWeight="SemiBold" Foreground="#F2F4F6"/>
+        </Grid>
+        <TextBlock Grid.Row="1" Margin="0,6,0,0" FontFamily="Consolas" FontSize="12" Foreground="{StaticResource MutedBrush}"
+                   Text="{Binding LastReportText, Mode=OneWay}" TextTrimming="CharacterEllipsis"/>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="5" Margin="20,6,20,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
@@ -271,7 +303,7 @@
       <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
     </Grid>
 
-    <Border Grid.RowSpan="5" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
+    <Border Grid.RowSpan="6" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
       <Border HorizontalAlignment="Right" Width="400" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
@@ -279,6 +311,10 @@
           <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource FaintBrush}" Margin="0,4,0,16"/>
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
+          <CheckBox Content="Use base station knob as ChatMix (07 25)" IsChecked="{Binding UseKnobAsChatMix}"
+                    ToolTip="The wired Nova Pro knob sends 07 25, a position rather than game and chat percents. Turn this on to drive the slider from that knob. Mixer learns the lowest and highest values it sees. Low is Game, high is Chat."/>
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
+                     Text="Leave this off unless the last report is 07 25 when you turn the mix knob. Real ChatMix reports are 07 45 and move the slider on their own."/>
           <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12"
                      Text="Install Virtual Audio Cable, open its control panel, and set the cable count to 4. Apps play into each line. Mixer records that line and sends the mix to the master output."/>

@@ -24,9 +24,16 @@ public sealed class MainViewModel : ObservableObject
     private bool _settingsOpen;
     private bool _chatMixEnabled;
     private bool _chatMixConnected;
+    private bool _useKnobAsChatMix;
+    private bool _balanceArmed;
+    private int _balanceSync;
+    private double _chatMixBalance = 50;
+    private int? _knobMin;
+    private int? _knobMax;
     private int _chatMixGame = -1;
     private int _chatMixChat = -1;
     private string _chatMixDetail = "Looking for the Nova Pro base station…";
+    private string _lastReport = "";
     private string _sonarWarning = "";
     private bool _virtualMixActive;
     private string _gameCableId = "";
@@ -42,6 +49,13 @@ public sealed class MainViewModel : ObservableObject
         _startWithWindows = config.StartWithWindows;
         _startMinimized = config.StartMinimized;
         _chatMixEnabled = config.ChatMixEnabled;
+        _useKnobAsChatMix = config.UseKnobAsChatMix;
+        _chatMix.UseKnobAsChatMix = config.UseKnobAsChatMix;
+        _knobMin = config.ChatMixKnobMin;
+        _knobMax = config.ChatMixKnobMax;
+        _chatMixBalance = Math.Clamp(config.ChatMixBalance, 0, 100);
+        _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
+        _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
         Channels = new ObservableCollection<ChannelViewModel>(
             ChannelIds.All.Select(id => new ChannelViewModel(id, engine)));
         ChannelChoices = new ObservableCollection<ChannelChoice>(
@@ -157,8 +171,79 @@ public sealed class MainViewModel : ObservableObject
             _config.ChatMixEnabled = value;
             _chatMix.Enabled = value;
             if (!value)
-                ChatMixDetail = "ChatMix is off. Game and Chat faders are manual.";
+                ChatMixDetail = "USB dial reading is off. The slider still sets Game and Chat.";
             try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+        }
+    }
+
+    public bool UseKnobAsChatMix
+    {
+        get => _useKnobAsChatMix;
+        set
+        {
+            if (!Set(ref _useKnobAsChatMix, value)) return;
+            _config.UseKnobAsChatMix = value;
+            _chatMix.UseKnobAsChatMix = value;
+            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+            if (value)
+                _chatMix.ReplayKnob();
+        }
+    }
+
+    public double ChatMixBalance
+    {
+        get => _chatMixBalance;
+        set
+        {
+            var balance = (int)Math.Round(double.IsFinite(value) ? value : 50, MidpointRounding.AwayFromZero);
+            balance = Math.Clamp(balance, 0, 100);
+            if (_balanceSync == 0 && !_balanceArmed) return;
+            if (!Set(ref _chatMixBalance, balance)) return;
+            Raise(nameof(ChatMixBalanceLabel));
+            if (_balanceSync > 0) return;
+            var (game, chat) = ChatMixMath.ToLevels(balance);
+            _chatMixGame = game;
+            _chatMixChat = chat;
+            Raise(nameof(ChatMixReadout));
+            _config.ChatMixBalance = balance;
+            _engine.ApplyChatMix(game, chat);
+        }
+    }
+
+    public string ChatMixBalanceLabel
+    {
+        get
+        {
+            var balance = (int)Math.Round(_chatMixBalance);
+            var (game, chat) = ChatMixMath.ToLevels(balance);
+            if (game >= 100 && chat >= 100) return balance + "   Both full";
+            if (chat <= 0) return balance + "   Game only";
+            if (game <= 0) return balance + "   Chat only";
+            return $"{balance}   G {game}   C {chat}";
+        }
+    }
+
+    public string LastReportText => string.IsNullOrEmpty(_lastReport)
+        ? "Last report: none yet"
+        : "Last report: " + _lastReport;
+
+    /// <summary>
+    /// Called once the window is shown so the slider's default value cannot overwrite config.
+    /// </summary>
+    public void ArmChatMixSlider()
+    {
+        var balance = Math.Clamp(_config.ChatMixBalance, 0, 100);
+        _balanceArmed = true;
+        if (Math.Abs(_chatMixBalance - balance) > 0.01)
+        {
+            _balanceSync++;
+            try { ChatMixBalance = balance; }
+            finally { _balanceSync--; }
+        }
+        else
+        {
+            Raise(nameof(ChatMixBalance));
+            Raise(nameof(ChatMixBalanceLabel));
         }
     }
 
@@ -181,15 +266,72 @@ public sealed class MainViewModel : ObservableObject
     public void OnChatMix(ChatMixReading reading)
     {
         ChatMixConnected = reading.Connected;
-        if (reading.HasLevels && reading.Game >= 0)
+        if (!string.IsNullOrEmpty(reading.RawReport))
+            LastReport = reading.RawReport;
+
+        if (reading.Kind == ChatMixReportKind.Knob)
         {
-            _chatMixGame = reading.Game;
-            _chatMixChat = reading.Chat;
-            Raise(nameof(ChatMixReadout));
-            if (ChatMixEnabled)
-                _engine.ApplyChatMix(reading.Game, reading.Chat);
+            var mapped = ChatMixMath.TryMapKnob(reading.Knob, ref _knobMin, ref _knobMax, out var balance, out var rangeChanged);
+            if (!UseKnobAsChatMix || !mapped)
+            {
+                ChatMixDetail = UseKnobAsChatMix
+                    ? $"Knob value {reading.Knob}. Turn it both ways to learn its range."
+                    : reading.Detail;
+                if (UseKnobAsChatMix && rangeChanged)
+                {
+                    _config.ChatMixKnobMin = _knobMin;
+                    _config.ChatMixKnobMax = _knobMax;
+                    try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+                }
+                return;
+            }
+
+            _config.ChatMixKnobMin = _knobMin;
+            _config.ChatMixKnobMax = _knobMax;
+            var (game, chat) = ChatMixMath.ToLevels(balance);
+            PushBalance(balance, game, chat);
+            ChatMixDetail = $"Knob {reading.Knob} mapped to {balance} (seen {_knobMin}–{_knobMax}). Low is Game, high is Chat.";
+            return;
         }
+
+        if (reading.Kind == ChatMixReportKind.Levels && reading.HasLevels && reading.Game >= 0 && ChatMixEnabled)
+        {
+            var balance = ChatMixMath.FromLevels(reading.Game, reading.Chat);
+            PushBalance(balance, reading.Game, reading.Chat);
+        }
+
         ChatMixDetail = reading.Detail;
+    }
+
+    private void PushBalance(int balance, int game, int chat)
+    {
+        _balanceSync++;
+        try
+        {
+            ChatMixBalance = balance;
+        }
+        finally
+        {
+            _balanceSync--;
+        }
+
+        _chatMixGame = game;
+        _chatMixChat = chat;
+        Raise(nameof(ChatMixReadout));
+        Raise(nameof(ChatMixBalanceLabel));
+        if (_config.ChatMixBalance != balance)
+            _config.ChatMixBalance = balance;
+        _engine.ApplyChatMix(game, chat);
+    }
+
+    private string LastReport
+    {
+        get => _lastReport;
+        set
+        {
+            if (!Set(ref _lastReport, value)) return;
+            Raise(nameof(LastReportText));
+        }
     }
 
     public void SelectOutput(string id)
