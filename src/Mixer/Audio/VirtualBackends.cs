@@ -20,25 +20,43 @@ internal static class VacCables
             playback[key] = (device.Id, device.Name, order);
         }
 
-        var recording = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var recording = new Dictionary<string, (string Id, int Order)>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in capture)
         {
-            if (!TryKey(device.Name, out var key, out _)) continue;
-            recording[key] = device.Id;
+            if (!TryKey(device.Name, out var key, out var order)) continue;
+            recording[key] = (device.Id, order);
         }
 
         var cables = new List<VacCable>();
         foreach (var (key, play) in playback)
         {
-            recording.TryGetValue(key, out var captureId);
+            recording.TryGetValue(key, out var rec);
             cables.Add(new VacCable
             {
                 Key = key,
                 RenderId = play.Id,
-                CaptureId = captureId,
+                CaptureId = rec.Id,
                 Label = LabelOf(play.Name),
                 Order = play.Order
             });
+        }
+
+        var usedCaptures = new HashSet<string>(
+            cables.Where(cable => !string.IsNullOrWhiteSpace(cable.CaptureId)).Select(cable => EndpointIds.Key(cable.CaptureId!)),
+            StringComparer.OrdinalIgnoreCase);
+        var freeCaptures = recording.Values
+            .Where(item => !string.IsNullOrWhiteSpace(item.Id) && !usedCaptures.Contains(EndpointIds.Key(item.Id)))
+            .OrderBy(item => item.Order)
+            .ThenBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var cable in cables.Where(cable => string.IsNullOrWhiteSpace(cable.CaptureId)).OrderBy(cable => cable.Order))
+        {
+            var match = freeCaptures.FirstOrDefault(item => item.Order == cable.Order);
+            if (string.IsNullOrWhiteSpace(match.Id))
+                match = freeCaptures.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(match.Id)) continue;
+            cable.CaptureId = match.Id;
+            freeCaptures.Remove(match);
         }
 
         if (captureByRender != null)

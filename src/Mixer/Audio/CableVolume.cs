@@ -13,6 +13,7 @@ internal sealed class CableVolume : IDisposable
 
     private readonly Dispatcher _dispatcher;
     private readonly Action<ChannelId, float, bool> _external;
+    private readonly LiveMix _gains;
     private readonly object _gate = new();
     private readonly Dictionary<ChannelId, Binding> _bindings = new();
     private readonly Dictionary<ChannelId, Pending> _pending = new();
@@ -20,10 +21,11 @@ internal sealed class CableVolume : IDisposable
     private readonly Thread _thread;
     private bool _disposed;
 
-    public CableVolume(Dispatcher dispatcher, Action<ChannelId, float, bool> external)
+    public CableVolume(Dispatcher dispatcher, Action<ChannelId, float, bool> external, LiveMix gains)
     {
         _dispatcher = dispatcher;
         _external = external;
+        _gains = gains;
         _thread = new Thread(Loop)
         {
             IsBackground = true,
@@ -46,13 +48,10 @@ internal sealed class CableVolume : IDisposable
                     continue;
                 if (_bindings.Remove(link.Channel, out var previous))
                     previous.Dispose();
-                var created = Binding.TryCreate(link, _dispatcher, _external);
+                var created = Binding.TryCreate(link, _dispatcher, _external, _gains);
                 if (created == null) continue;
                 _bindings[link.Channel] = created;
-                if (created.HardwareVolume)
-                    Enqueue(link.Channel, link.Volume, created.HardwareMute ? link.Muted : null);
-                else if (created.HardwareMute)
-                    Enqueue(link.Channel, null, link.Muted);
+                Enqueue(link.Channel, link.Volume, link.Muted);
             }
 
             foreach (var channel in _bindings.Keys.Where(channel => !keep.Contains(channel)).ToList())
@@ -80,7 +79,7 @@ internal sealed class CableVolume : IDisposable
     {
         lock (_gate)
         {
-            if (!_bindings.TryGetValue(id, out var binding) || !binding.HardwareVolume) return false;
+            if (!_bindings.ContainsKey(id)) return false;
             Enqueue(id, volume, null);
             return true;
         }
@@ -90,7 +89,7 @@ internal sealed class CableVolume : IDisposable
     {
         lock (_gate)
         {
-            if (!_bindings.TryGetValue(id, out var binding) || !binding.HardwareMute) return false;
+            if (!_bindings.ContainsKey(id)) return false;
             Enqueue(id, null, muted);
             return true;
         }
@@ -163,6 +162,7 @@ internal sealed class CableVolume : IDisposable
             {
                 try { binding.Apply(pending.Volume, pending.Muted); }
                 catch (Exception ex) { Services.Log.Error("Cable volume write failed", ex); }
+                binding.FlushLog();
             }
         }
     }
@@ -184,13 +184,18 @@ internal sealed class CableVolume : IDisposable
         private readonly AudioEndpointVolume? _captureVolume;
         private bool _disposed;
 
-        private Binding(ChannelId channel, MMDevice render, MMDevice? capture, Dispatcher dispatcher, Action<ChannelId, float, bool> external, AudioEndpointVolume renderVolume, AudioEndpointVolume? captureVolume, bool hardwareVolume, bool hardwareMute)
+        private readonly LiveMix _gains;
+        private long _nextLog;
+        private string? _pendingLog;
+
+        private Binding(ChannelId channel, MMDevice render, MMDevice? capture, Dispatcher dispatcher, Action<ChannelId, float, bool> external, LiveMix gains, AudioEndpointVolume renderVolume, AudioEndpointVolume? captureVolume, bool hardwareVolume, bool hardwareMute)
         {
             _channel = channel;
             Render = render;
             Capture = capture;
             _dispatcher = dispatcher;
             _external = external;
+            _gains = gains;
             _renderVolume = renderVolume;
             _captureVolume = captureVolume;
             HardwareVolume = hardwareVolume;
@@ -210,7 +215,7 @@ internal sealed class CableVolume : IDisposable
         public bool HardwareVolume { get; }
         public bool HardwareMute { get; }
 
-        public static Binding? TryCreate(Link link, Dispatcher dispatcher, Action<ChannelId, float, bool> external)
+        public static Binding? TryCreate(Link link, Dispatcher dispatcher, Action<ChannelId, float, bool> external, LiveMix gains)
         {
             try
             {
@@ -224,7 +229,7 @@ internal sealed class CableVolume : IDisposable
                     try { captureVolume = link.Capture.AudioEndpointVolume; }
                     catch { captureVolume = null; }
                 }
-                return new Binding(link.Channel, link.Render, link.Capture, dispatcher, external, renderVolume, captureVolume, hardwareVolume, hardwareMute);
+                return new Binding(link.Channel, link.Render, link.Capture, dispatcher, external, gains, renderVolume, captureVolume, hardwareVolume, hardwareMute);
             }
             catch (Exception ex)
             {
@@ -236,10 +241,72 @@ internal sealed class CableVolume : IDisposable
         public void Apply(float? volume, bool? muted)
         {
             if (_disposed) return;
-            if (volume is float level && HardwareVolume)
-                _renderVolume.MasterVolumeLevelScalar = Math.Clamp(level, 0f, 1f);
-            if (muted is bool flag && HardwareMute)
-                _renderVolume.Mute = flag;
+            if (volume is float level)
+                ApplyVolume(Math.Clamp(level, 0f, 1f));
+            if (muted is bool flag)
+                ApplyMute(flag);
+        }
+
+        public void FlushLog()
+        {
+            if (_pendingLog == null || Environment.TickCount64 < _nextLog) return;
+            Services.Log.Info(_pendingLog);
+            _pendingLog = null;
+            _nextLog = Environment.TickCount64 + 500;
+        }
+
+        private void ApplyVolume(float level)
+        {
+            var hr = 0;
+            var accepted = false;
+            try
+            {
+                _renderVolume.MasterVolumeLevelScalar = level;
+                var read = _renderVolume.MasterVolumeLevelScalar;
+                accepted = HardwareVolume || Math.Abs(read - level) < 0.03f;
+            }
+            catch (Exception ex)
+            {
+                hr = ex.HResult;
+                accepted = false;
+            }
+
+            _gains.SetSoftwareFader(_channel, !accepted);
+            Note($"Fader {_channel} endpoint {Render.ID} volume {level:0.00} hr=0x{hr:X8}{(accepted ? "" : " software")}", hr < 0);
+        }
+
+        private void ApplyMute(bool muted)
+        {
+            var hr = 0;
+            var accepted = false;
+            try
+            {
+                _renderVolume.Mute = muted;
+                accepted = HardwareMute || _renderVolume.Mute == muted;
+            }
+            catch (Exception ex)
+            {
+                hr = ex.HResult;
+                accepted = false;
+            }
+
+            _gains.SetSoftwareMute(_channel, !accepted);
+            if (!accepted)
+                _gains.SetMuted(_channel, muted);
+            Note($"Fader {_channel} endpoint {Render.ID} mute {muted} hr=0x{hr:X8}{(accepted ? "" : " software")}", hr < 0);
+        }
+
+        private void Note(string line, bool failure)
+        {
+            var now = Environment.TickCount64;
+            if (failure || now >= _nextLog)
+            {
+                _pendingLog = null;
+                _nextLog = now + 500;
+                Services.Log.Info(line);
+                return;
+            }
+            _pendingLog = line;
         }
 
         public void Dispose()

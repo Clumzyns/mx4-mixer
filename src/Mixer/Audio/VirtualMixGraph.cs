@@ -45,16 +45,14 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
             {
                 if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux))
                     continue;
-                renderIds.TryGetValue(channel, out var renderId);
-                var ownId = config.Channel(channel).DeviceId;
-                var separate = !string.IsNullOrWhiteSpace(ownId)
-                    && !string.Equals(ownId, renderId, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(ownId, source.ID, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(ownId, master.ID, StringComparison.OrdinalIgnoreCase)
-                    && outputs.TryGetValue(ownId, out _);
-                var playback = separate ? outputs[ownId!] : master;
-                var destFormat = separate ? PlaybackFormat(playback) : outputFormat;
-                graph._taps[channel] = graph.StartTap(channel, source, live, separate, separate ? playback : null, destFormat);
+                try
+                {
+                    graph._taps[channel] = graph.StartTap(channel, source, live, false, null, outputFormat);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Mix capture {channel} not started", ex);
+                }
             }
 
             graph._masterTaps = graph._taps.Values.Where(tap => !tap.Separate).ToArray();
@@ -142,7 +140,7 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         capture.DataAvailable += (_, args) => tap.Write(args.Buffer, args.BytesRecorded, capture.WaveFormat);
         capture.StartRecording();
         tap.Capture = capture;
-        Log.Info($"Mix capture {channel} {capture.WaveFormat.SampleRate}Hz -> {destFormat.SampleRate}Hz event {PeriodMs}ms.");
+        Log.Info($"Mix capture {channel} started endpoint={source.ID} {capture.WaveFormat.SampleRate}Hz -> {destFormat.SampleRate}Hz event {PeriodMs}ms.");
 
         if (separate && ownOutput != null)
         {

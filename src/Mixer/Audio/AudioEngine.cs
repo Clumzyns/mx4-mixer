@@ -56,7 +56,7 @@ public sealed class AudioEngine : IDisposable
     {
         _config = config;
         _dispatcher = System.Windows.Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
-        _cableVolume = new CableVolume(_dispatcher, ApplyEndpointVolume);
+        _cableVolume = new CableVolume(_dispatcher, ApplyEndpointVolume, _gains);
         _enumerator = new MMDeviceEnumerator();
         _notifications = new DeviceNotifications(this);
         _meterThread = new Thread(MeterLoop) { IsBackground = true, Name = "Mixer.Meters" };
@@ -207,6 +207,8 @@ public sealed class AudioEngine : IDisposable
 
     public void SetChannelDevice(ChannelId id, string? deviceId)
     {
+        if (id is ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)
+            deviceId = null;
         _config.Channel(id).DeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
         _routed.Clear();
         RouteAll();
@@ -534,8 +536,11 @@ public sealed class AudioEngine : IDisposable
     private string? DesiredDevice(string exeKey)
     {
         var channel = Resolve(exeKey);
-        if (_virtualInputs.TryGetValue(channel, out var virtualId))
-            return virtualId;
+        if (channel is ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux &&
+            _virtualInputs.TryGetValue(channel, out var cable))
+            return cable;
+        if (channel is ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)
+            return null;
         var id = _config.Channel(channel).DeviceId;
         return string.IsNullOrWhiteSpace(id) ? null : id;
     }
@@ -888,6 +893,7 @@ public sealed class AudioEngine : IDisposable
         _virtualInputs.Clear();
         _virtualCaptures.Clear();
         _backendName = "";
+        ClearPinnedMixOutputs();
         var render = _render.Values.Select(device => (device.ID, DeviceSnap(device).Name));
         var capture = _capture.Values.Select(device => (device.ID, DeviceSnap(device).Name));
         _cables = VacCables.Discover(render, capture, _config.CableCaptures).ToList();
@@ -897,10 +903,20 @@ public sealed class AudioEngine : IDisposable
         {
             if (!_config.CableAssignments.TryGetValue(channel.Key(), out var renderId)) continue;
             var cable = _cables.FirstOrDefault(item => SameDevice(item.RenderId, renderId));
-            if (cable == null || string.IsNullOrWhiteSpace(cable.CaptureId)) continue;
+            if (cable == null)
+            {
+                Log.Info($"Mix capture {channel} not started: no cable is assigned.");
+                continue;
+            }
             _virtualInputs[channel] = cable.RenderId;
+            if (string.IsNullOrWhiteSpace(cable.CaptureId))
+            {
+                Log.Info($"Mix capture {channel} not started: cable {cable.RenderId} has no recording endpoint.");
+                continue;
+            }
             _virtualCaptures[channel] = cable.CaptureId;
             _backendName = "VAC";
+            Log.Info($"Mix capture {channel} assigned render={cable.RenderId} capture={cable.CaptureId}");
         }
 
         var gg = SteelSeriesApps.Running();
@@ -922,6 +938,21 @@ public sealed class AudioEngine : IDisposable
         RememberCaptures();
         SyncCableVolumes();
         OfferCableRename();
+    }
+
+    private void ClearPinnedMixOutputs()
+    {
+        var changed = false;
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            if (string.IsNullOrWhiteSpace(_config.Channel(channel).DeviceId)) continue;
+            _config.Channel(channel).DeviceId = null;
+            changed = true;
+        }
+        if (!changed) return;
+        _routed.Clear();
+        Log.Info("Cleared per-channel output devices. Game, Chat, Media, and Aux play into their VAC cables.");
+        ScheduleSave();
     }
 
     private void RememberCaptures()
