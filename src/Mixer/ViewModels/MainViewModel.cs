@@ -237,6 +237,19 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public bool ShowSongOnDisplay
+    {
+        get => _display.ShowSong;
+        set
+        {
+            if (_display.ShowSong == value) return;
+            _config.ShowSongOnDisplay = value;
+            _display.ShowSong = value;
+            Raise(nameof(ShowSongOnDisplay));
+            ConfigStore.SaveSoon(_config);
+        }
+    }
+
     public int[] LatencyChoices { get; } = [10, 20, 40];
 
     public int MixLatencyMs

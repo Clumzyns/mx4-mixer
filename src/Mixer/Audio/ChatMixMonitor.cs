@@ -278,6 +278,7 @@ public sealed class ChatMixMonitor : IDisposable
         }
     }
 
+    private static int _oledFrameLogged;
     private readonly object _oledGate = new();
     private byte[][]? _oledPackets;
     private int _oledGeneration;
@@ -340,7 +341,9 @@ public sealed class ChatMixMonitor : IDisposable
         try
         {
             stream.SetFeature(packet, 0, packet.Length);
-            Log.Info($"OLED SetFeature {Hex(packet, Math.Min(6, packet.Length))} len={packet.Length} hr=0x00000000");
+            // Frames repeat every second, so only the first one and anything that is not a frame is logged.
+            if (packet.Length < 2 || packet[1] != 0x93 || Interlocked.Exchange(ref _oledFrameLogged, 1) == 0)
+                Log.Info($"OLED SetFeature {Hex(packet, Math.Min(6, packet.Length))} len={packet.Length} hr=0x00000000");
         }
         catch (Exception ex)
         {

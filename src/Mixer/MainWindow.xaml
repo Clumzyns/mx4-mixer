@@ -337,6 +337,8 @@
                     ToolTip="By default knob position 0 is full volume and 56 is silent. Turn this on to swap that."/>
           <CheckBox Content="Custom base station display" IsChecked="{Binding CustomDisplay}"
                     ToolTip="Draw master, ChatMix, and the four channel levels on the Nova Pro screen. The stock screen returns when Mixer exits."/>
+          <CheckBox Content="Show Spotify song on the display" IsChecked="{Binding ShowSongOnDisplay}"
+                    ToolTip="When nothing has been adjusted for 5 seconds, the Nova Pro screen shows the song Spotify is playing. Turning a dial or moving a fader brings the mix back."/>
           <TextBlock Text="Latency" Margin="0,14,0,4"/>
           <ComboBox Width="120" HorizontalAlignment="Left" ItemsSource="{Binding LatencyChoices}" SelectedItem="{Binding MixLatencyMs}"/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"

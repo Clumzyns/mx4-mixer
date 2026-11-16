@@ -35,8 +35,11 @@ internal static class OledScreen
         canvas.Row(33, "CHT", picture.Chat, picture.ChatMuted);
         canvas.Row(44, "MED", picture.Media, picture.MediaMuted);
         canvas.Row(55, "AUX", picture.Aux, picture.AuxMuted);
-        return [Strip(pixels, 0), Strip(pixels, 64)];
+        return Pack(pixels);
     }
+
+    /// <summary>Packs a row-major 128x64 frame, true meaning lit.</summary>
+    public static byte[][] Pack(bool[] pixels) => [Strip(pixels, 0), Strip(pixels, 64)];
 
     public static byte[] ReturnToUi()
     {
@@ -67,7 +70,7 @@ internal static class OledScreen
         return packet;
     }
 
-    private sealed class Canvas
+    internal sealed class Canvas
     {
         private readonly bool[] _pixels;
         public Canvas(bool[] pixels) => _pixels = pixels;
@@ -117,7 +120,7 @@ internal static class OledScreen
             }
         }
 
-        private void Text(int x, int y, string text)
+        public void Text(int x, int y, string text)
         {
             foreach (var ch in text)
             {
@@ -138,7 +141,7 @@ internal static class OledScreen
             }
         }
 
-        private void Plot(int x, int y)
+        public void Plot(int x, int y)
         {
             if ((uint)x >= Width || (uint)y >= Height) return;
             _pixels[y * Width + x] = true;
@@ -168,6 +171,7 @@ internal static class OledScreen
             'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
             'U' => [0b101, 0b101, 0b101, 0b101, 0b111],
             'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
+            ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
             _ => [0, 0, 0, 0, 0]
         };
     }
