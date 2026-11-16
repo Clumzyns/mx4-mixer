@@ -9,13 +9,49 @@ The window title and tray name come from `AppInfo.Name` in `src/Mixer/AppInfo.cs
 ## Setup
 
 1. Buy a [Virtual Audio Cable license](https://vac.muzychenko.net/en/purchase.htm) from its author, Eugene Muzychenko, and install the full version from the link in your purchase email. The [trial version](https://vac.muzychenko.net/en/download.htm) works for trying Mixer out, but it adds a spoken reminder to the audio.
-2. Open VAC Control Panel and set the number of cables to 4. Restart Mixer after Windows shows Line 1 through Line 4.
+2. Open VAC Control Panel and set the number of cables to 4, then set the cables up as shown in [Configure Virtual Audio Cable](#configure-virtual-audio-cable). Restart Mixer after Windows shows Line 1 through Line 4.
 3. In Mixer settings, check the Game, Chat, Media, and Aux cable dropdowns. They default to Line 1 through Line 4.
 4. Optional: Rename to Mixer - Game, Chat, Media, and Aux. Windows asks for administrator approval.
 5. Set OUTPUT to the IEM DAC, for example Fosi Audio K5 Pro. Leave each channel on Master mix.
 6. Quit SteelSeries GG if it is open so the Nova Pro dial stays with Mixer.
 
 Apps play into a cable's playback device. Mixer records that cable and sends the mix to the master output.
+
+## Configure Virtual Audio Cable
+
+These are the settings Mixer was set up and tested with.
+
+### 1. VAC Control Panel
+
+![VAC Control Panel with four cables](docs/vac-control-panel.png)
+
+- **Cables:** 4, then press **Set**.
+- For each of the four cables, select it in the list and set:
+  - **SR** (sample rate range): 22050 to 384000
+  - **BPS** (bits per sample): 8 to 32
+  - **NC** (channels): 1 to 2
+  - **Ms per int:** 3
+  - **Stream fmt limit:** Cable range
+  - **Volume control** and **Channel mixing:** on
+  - **Connected source lines:** Line
+- Press **Set** in the Cable section after changing a cable.
+
+### 2. Give every cable and the DAC the same format
+
+![Default Format set to 2 channel, 32 bit, 384000 Hz](docs/cable-default-format.png)
+
+Open Windows Sound settings (`mmsys.cpl`). For each cable, open **Properties > Advanced** on both its Playback device and its Recording device and pick the same **Default Format**. Then set the DAC's playback device to that format too.
+
+Mixer was tested with everything at **2 channel, 32 bit, 384000 Hz**. Use the highest format your DAC offers. What matters is that the four cables and the DAC all match: mismatched formats caused static during testing.
+
+## Tested with
+
+- Amp and DAC: Fosi Audio K5 Pro
+- In-ear monitors: Kiwi Ears Cadenza II (from Linsoul)
+- Base station: SteelSeries Arctis Nova Pro wired GameDAC
+- Windows 11
+
+Other DACs and headphones should work. These are simply what it has been run on.
 
 ## Virtual Audio Cable license
 
