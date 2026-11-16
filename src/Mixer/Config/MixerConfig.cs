@@ -14,6 +14,7 @@ public sealed class MixerConfig
     public int Version { get; set; } = 1;
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
+    public bool ChatMixEnabled { get; set; } = true;
     public string? MasterOutputDeviceId { get; set; }
     public string? MasterInputDeviceId { get; set; }
     public Dictionary<string, ChannelSettings> Channels { get; set; } = new(StringComparer.OrdinalIgnoreCase);

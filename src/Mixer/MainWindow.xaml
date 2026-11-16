@@ -24,6 +24,7 @@
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
@@ -73,7 +74,37 @@
       </StackPanel>
     </Grid>
 
-    <ScrollViewer x:Name="ColumnScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
+    <Border Grid.Row="1" Margin="16,0,16,8" Padding="12,8" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
+          <Ellipse.Style>
+            <Style TargetType="Ellipse">
+              <Setter Property="Fill" Value="#5C6573"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding ChatMixConnected}" Value="True">
+                  <Setter Property="Fill" Value="#B6F23A"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Ellipse.Style>
+        </Ellipse>
+        <TextBlock Grid.Column="1" Text="CHATMIX" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <CheckBox Grid.Column="2" Content="On" IsChecked="{Binding ChatMixEnabled}" Margin="0,0,14,0" VerticalAlignment="Center" ToolTip="Read the Nova Pro dial and drive the Game and Chat faders"/>
+        <TextBlock Grid.Column="3" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{StaticResource MutedBrush}" FontSize="12">
+          <Run Text="{Binding ChatMixReadout, Mode=OneWay}" FontWeight="SemiBold" Foreground="#F2F4F6"/>
+          <Run Text="   "/>
+          <Run Text="{Binding ChatMixDetail, Mode=OneWay}"/>
+        </TextBlock>
+      </Grid>
+    </Border>
+
+    <ScrollViewer x:Name="ColumnScroll" Grid.Row="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
       <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="1120">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
@@ -201,7 +232,7 @@
       </ItemsControl>
     </ScrollViewer>
 
-    <Grid Grid.Row="2" Margin="20,6,20,10">
+    <Grid Grid.Row="3" Margin="20,6,20,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
@@ -223,7 +254,7 @@
       <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
     </Grid>
 
-    <Border Grid.RowSpan="3" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
+    <Border Grid.RowSpan="4" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
       <Border HorizontalAlignment="Right" Width="380" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
         <StackPanel Margin="24">
           <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
@@ -240,7 +271,7 @@
       </Border>
     </Border>
 
-    <Border Grid.Row="1" Margin="16" Background="#E614181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16" Padding="24"
+    <Border Grid.Row="2" Margin="16" Background="#E614181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16" Padding="24"
             Visibility="{Binding NoOutputs, Converter={StaticResource BoolVis}}" IsHitTestVisible="False">
       <TextBlock Text="No playback devices found. Plug in your IEMs and Mixer will list them here." FontSize="16" TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center"/>
     </Border>

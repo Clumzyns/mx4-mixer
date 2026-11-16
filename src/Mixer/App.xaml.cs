@@ -13,6 +13,7 @@ public partial class App : System.Windows.Application
 
     private SingleInstance? _instance;
     private AudioEngine? _engine;
+    private ChatMixMonitor? _chatMix;
     private TrayService? _tray;
     private MainWindow? _window;
     private MixerConfig? _config;
@@ -37,9 +38,12 @@ public partial class App : System.Windows.Application
         {
             _config = ConfigStore.Load();
             _engine = new AudioEngine(_config);
-            var viewModel = new MainViewModel(_engine, _config);
+            _chatMix = new ChatMixMonitor { Enabled = _config.ChatMixEnabled };
+            var viewModel = new MainViewModel(_engine, _config, _chatMix);
+            _chatMix.Reading += (_, reading) => Dispatcher.BeginInvoke(() => viewModel.OnChatMix(reading));
             _window = new MainWindow(viewModel);
             _tray = new TrayService(_window, viewModel, ExitApplication);
+            _chatMix.Start();
             _engine.Start();
             if (_config.StartMinimized)
             {
@@ -64,6 +68,7 @@ public partial class App : System.Windows.Application
         if (IsExiting && _window == null) return;
         IsExiting = true;
         TrySave();
+        try { _chatMix?.Dispose(); } catch { /* already stopped */ }
         try { _engine?.Dispose(); } catch { /* already stopped */ }
         try { _tray?.Dispose(); } catch { /* already stopped */ }
         try { _instance?.Dispose(); } catch { /* already stopped */ }

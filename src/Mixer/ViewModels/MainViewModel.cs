@@ -10,6 +10,7 @@ public sealed class MainViewModel : ObservableObject
 {
     private readonly AudioEngine _engine;
     private readonly MixerConfig _config;
+    private readonly ChatMixMonitor _chatMix;
     private readonly Dictionary<string, AppChipViewModel> _chips = new(StringComparer.OrdinalIgnoreCase);
     private int _syncing;
     private string? _selectedOutputId;
@@ -21,13 +22,20 @@ public sealed class MainViewModel : ObservableObject
     private bool _startWithWindows;
     private bool _startMinimized;
     private bool _settingsOpen;
+    private bool _chatMixEnabled;
+    private bool _chatMixConnected;
+    private int _chatMixGame = -1;
+    private int _chatMixChat = -1;
+    private string _chatMixDetail = "Looking for the Nova Pro base station…";
 
-    public MainViewModel(AudioEngine engine, MixerConfig config)
+    public MainViewModel(AudioEngine engine, MixerConfig config, ChatMixMonitor chatMix)
     {
         _engine = engine;
         _config = config;
+        _chatMix = chatMix;
         _startWithWindows = config.StartWithWindows;
         _startMinimized = config.StartMinimized;
+        _chatMixEnabled = config.ChatMixEnabled;
         Channels = new ObservableCollection<ChannelViewModel>(
             ChannelIds.All.Select(id => new ChannelViewModel(id, engine)));
         ChannelChoices = new ObservableCollection<ChannelChoice>(
@@ -117,6 +125,50 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _settingsOpen;
         set => Set(ref _settingsOpen, value);
+    }
+
+    public bool ChatMixEnabled
+    {
+        get => _chatMixEnabled;
+        set
+        {
+            if (!Set(ref _chatMixEnabled, value)) return;
+            _config.ChatMixEnabled = value;
+            _chatMix.Enabled = value;
+            if (!value)
+                ChatMixDetail = "ChatMix is off. Game and Chat faders are manual.";
+            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+        }
+    }
+
+    public bool ChatMixConnected
+    {
+        get => _chatMixConnected;
+        private set => Set(ref _chatMixConnected, value);
+    }
+
+    public string ChatMixReadout => _chatMixGame >= 0
+        ? $"Game {_chatMixGame}   Chat {_chatMixChat}"
+        : "No dial yet";
+
+    public string ChatMixDetail
+    {
+        get => _chatMixDetail;
+        private set => Set(ref _chatMixDetail, value);
+    }
+
+    public void OnChatMix(ChatMixReading reading)
+    {
+        ChatMixConnected = reading.Connected;
+        if (reading.HasLevels && reading.Game >= 0)
+        {
+            _chatMixGame = reading.Game;
+            _chatMixChat = reading.Chat;
+            Raise(nameof(ChatMixReadout));
+            if (ChatMixEnabled)
+                _engine.ApplyChatMix(reading.Game, reading.Chat);
+        }
+        ChatMixDetail = reading.Detail;
     }
 
     public void SelectOutput(string id)

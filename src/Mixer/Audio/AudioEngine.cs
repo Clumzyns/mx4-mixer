@@ -121,6 +121,23 @@ public sealed class AudioEngine : IDisposable
         ScheduleSave();
     }
 
+    /// <summary>
+    /// Game and Chat faders follow the Nova Pro dial. 0-100 on each side, center is 100/100.
+    /// </summary>
+    public void ApplyChatMix(int game, int chat)
+    {
+        var gameVolume = VolumeMath.Clamp(game / 100f);
+        var chatVolume = VolumeMath.Clamp(chat / 100f);
+        var gameChanged = Math.Abs(_config.Channel(ChannelId.Game).Volume - gameVolume) > 0.005f;
+        var chatChanged = Math.Abs(_config.Channel(ChannelId.Chat).Volume - chatVolume) > 0.005f;
+        if (!gameChanged && !chatChanged) return;
+        _config.Channel(ChannelId.Game).Volume = gameVolume;
+        _config.Channel(ChannelId.Chat).Volume = chatVolume;
+        QueueGain();
+        ScheduleSave();
+        Notify();
+    }
+
     public void SetChannelMuted(ChannelId id, bool muted)
     {
         _config.Channel(id).Muted = muted;
