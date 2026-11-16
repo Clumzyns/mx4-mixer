@@ -66,9 +66,16 @@ public sealed class AudioEngine : IDisposable
         SetKnobInverted(config.InvertVolumeKnob);
         _saveTimer.Tick += (_, _) =>
         {
-            _saveTimer.Stop();
-            try { ConfigStore.Save(_config); }
-            catch (Exception ex) { Log.Error("Save failed", ex); }
+        _saveTimer.Stop();
+        var remaining = Volatile.Read(ref _saveNotBefore) - Environment.TickCount64;
+        if (remaining > 0)
+        {
+            ArmSaveTimer();
+            return;
+        }
+        Interlocked.Exchange(ref _saveQueued, 0);
+        try { ConfigStore.Save(_config); }
+        catch (Exception ex) { Log.Error("Save failed", ex); }
         };
     }
 
@@ -171,6 +178,8 @@ public sealed class AudioEngine : IDisposable
     }
 
     private int _invertKnob;
+    private int _appliedGame = int.MinValue;
+    private int _appliedChat = int.MinValue;
 
     public void SetKnobInverted(bool invert) => Volatile.Write(ref _invertKnob, invert ? 1 : 0);
 
@@ -189,11 +198,20 @@ public sealed class AudioEngine : IDisposable
     /// </summary>
     public void ApplyChatMix(int game, int chat)
     {
-        _gains.SetChatMix(ChannelId.Game, VolumeMath.Clamp(game / 100f));
-        _gains.SetChatMix(ChannelId.Chat, VolumeMath.Clamp(chat / 100f));
+        game = Math.Clamp(game, 0, 100);
+        chat = Math.Clamp(chat, 0, 100);
+        _gains.SetChatMix(ChannelId.Game, game / 100f);
+        _gains.SetChatMix(ChannelId.Chat, chat / 100f);
         _gains.SetChatMix(ChannelId.Media, 1f);
         _gains.SetChatMix(ChannelId.Aux, 1f);
         _gains.SetChatMix(ChannelId.System, 1f);
+        if (game == _appliedGame && chat == _appliedChat) return;
+        _appliedGame = game;
+        _appliedChat = chat;
+        var balance = ChatMixMath.FromLevels(game, chat);
+        if (_config.ChatMixBalance != balance)
+            _config.ChatMixBalance = balance;
+        ScheduleSave();
     }
 
     public void SetChannelMuted(ChannelId id, bool muted)
@@ -773,7 +791,10 @@ public sealed class AudioEngine : IDisposable
             var settings = _config.Channel(id);
             var label = "";
             if (_virtualInputs.TryGetValue(id, out var renderId))
-                label = _cables.FirstOrDefault(cable => SameDevice(cable.RenderId, renderId))?.Label ?? "";
+            {
+                var cable = _cables.FirstOrDefault(item => SameDevice(item.RenderId, renderId));
+                label = cable != null && cable.Order is > 0 and < 1000 ? "Line " + cable.Order : "";
+            }
             return new ChannelSnapshot
             {
                 Id = id,
@@ -844,24 +865,25 @@ public sealed class AudioEngine : IDisposable
         });
     }
 
+    private long _saveNotBefore;
+
     private void ScheduleSave()
     {
-        if (_dispatcher.CheckAccess())
-        {
-            RestartSaveTimer();
-            return;
-        }
-
+        Volatile.Write(ref _saveNotBefore, Environment.TickCount64 + 500);
         if (Interlocked.Exchange(ref _saveQueued, 1) == 1) return;
-        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-        {
-            Interlocked.Exchange(ref _saveQueued, 0);
-            if (!_disposed) RestartSaveTimer();
-        }));
+        if (_dispatcher.CheckAccess())
+            ArmSaveTimer();
+        else
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, ArmSaveTimer);
     }
 
-    private void RestartSaveTimer()
+    private void ArmSaveTimer()
     {
+        if (_disposed) return;
+        var wait = Volatile.Read(ref _saveNotBefore) - Environment.TickCount64;
+        if (wait < 1) wait = 1;
+        if (wait > 2000) wait = 2000;
+        _saveTimer.Interval = SafeTime.Milliseconds(wait);
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -894,30 +916,10 @@ public sealed class AudioEngine : IDisposable
         _virtualCaptures.Clear();
         _backendName = "";
         ClearPinnedMixOutputs();
-        var render = _render.Values.Select(device => (device.ID, DeviceSnap(device).Name));
-        var capture = _capture.Values.Select(device => (device.ID, DeviceSnap(device).Name));
+        var render = _render.Values.Select(device => (device.ID, DeviceSnap(device).Name, VacLine.Read(device, _enumerator)));
+        var capture = _capture.Values.Select(device => (device.ID, DeviceSnap(device).Name, VacLine.Read(device, _enumerator)));
         _cables = VacCables.Discover(render, capture, _config.CableCaptures).ToList();
-        AssignDefaultCables();
-
-        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
-        {
-            if (!_config.CableAssignments.TryGetValue(channel.Key(), out var renderId)) continue;
-            var cable = _cables.FirstOrDefault(item => SameDevice(item.RenderId, renderId));
-            if (cable == null)
-            {
-                Log.Info($"Mix capture {channel} not started: no cable is assigned.");
-                continue;
-            }
-            _virtualInputs[channel] = cable.RenderId;
-            if (string.IsNullOrWhiteSpace(cable.CaptureId))
-            {
-                Log.Info($"Mix capture {channel} not started: cable {cable.RenderId} has no recording endpoint.");
-                continue;
-            }
-            _virtualCaptures[channel] = cable.CaptureId;
-            _backendName = "VAC";
-            Log.Info($"Mix capture {channel} assigned render={cable.RenderId} capture={cable.CaptureId}");
-        }
+        BindChannelsToLines();
 
         var gg = SteelSeriesApps.Running();
         if (_cables.Count == 0)
@@ -938,6 +940,80 @@ public sealed class AudioEngine : IDisposable
         RememberCaptures();
         SyncCableVolumes();
         OfferCableRename();
+    }
+
+    private void BindChannelsToLines()
+    {
+        var usedLines = new HashSet<int>();
+        var usedRenders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var changed = false;
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            var key = channel.Key();
+            var line = _config.CableLines.TryGetValue(key, out var saved) ? saved : 0;
+            var byGuid = _config.CableAssignments.TryGetValue(key, out var renderId)
+                ? _cables.FirstOrDefault(cable => SameDevice(cable.RenderId, renderId))
+                : null;
+            if (line <= 0 && byGuid != null && byGuid.Order is > 0 and < 1000)
+                line = byGuid.Order;
+            var cable = line > 0
+                ? _cables.FirstOrDefault(item => item.Order == line && !usedLines.Contains(item.Order))
+                : null;
+            if (cable == null && byGuid != null && !usedRenders.Contains(EndpointIds.Key(byGuid.RenderId)))
+                cable = byGuid;
+            if (cable == null && line <= 0 && byGuid == null)
+            {
+                cable = _cables.FirstOrDefault(item =>
+                    item.Order is > 0 and < 1000 &&
+                    !usedLines.Contains(item.Order) &&
+                    !string.IsNullOrWhiteSpace(item.CaptureId));
+                if (cable != null)
+                    line = cable.Order;
+            }
+            if (cable == null)
+            {
+                Log.Info($"Mix capture {channel} not started: no VAC line is available.");
+                continue;
+            }
+            if (cable.Order is > 0 and < 1000)
+            {
+                line = cable.Order;
+                usedLines.Add(cable.Order);
+            }
+            usedRenders.Add(EndpointIds.Key(cable.RenderId));
+            if (line > 0 && (!_config.CableLines.TryGetValue(key, out var have) || have != line))
+            {
+                _config.CableLines[key] = line;
+                changed = true;
+            }
+            if (!_config.CableAssignments.TryGetValue(key, out var assigned) || !SameDevice(assigned, cable.RenderId))
+            {
+                _config.CableAssignments[key] = cable.RenderId;
+                changed = true;
+                Log.Info($"Channel {channel} remapped to Line {cable.Order} render={cable.RenderId}");
+            }
+            if (!string.IsNullOrWhiteSpace(cable.CaptureId) &&
+                (!_config.CableCaptures.TryGetValue(key, out var savedCapture) || !SameDevice(savedCapture, cable.CaptureId)))
+            {
+                _config.CableCaptures[key] = cable.CaptureId;
+                changed = true;
+            }
+            _virtualInputs[channel] = cable.RenderId;
+            var lineText = cable.Order is > 0 and < 1000 ? "Line " + cable.Order : "unnumbered";
+            if (string.IsNullOrWhiteSpace(cable.CaptureId))
+            {
+                Log.Info($"Mix capture {channel} not started: {lineText} render={cable.RenderId} has no recording endpoint.");
+                continue;
+            }
+            _virtualCaptures[channel] = cable.CaptureId;
+            _backendName = "VAC";
+            Log.Info($"Mix capture {channel} follows {lineText} render={cable.RenderId} capture={cable.CaptureId}");
+        }
+        if (changed)
+        {
+            _routed.Clear();
+            ScheduleSave();
+        }
     }
 
     private void ClearPinnedMixOutputs()
@@ -1003,25 +1079,21 @@ public sealed class AudioEngine : IDisposable
         return false;
     }
 
-    private bool _renameOffered;
+    private string _renameTicket = "";
 
     private void OfferCableRename()
     {
-        if (_renameOffered || _config.CableNamesApplied || _virtualInputs.Count == 0) return;
-        if (!NamesNeedRename())
-        {
-            _config.CableNamesApplied = true;
-            ScheduleSave();
-            return;
-        }
-
-        _renameOffered = true;
-        _config.CableNamesApplied = true;
-        try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+        if (_virtualInputs.Count == 0) return;
+        var pending = MismatchSignature();
+        if (pending.Length == 0 || pending == _renameTicket) return;
+        _renameTicket = pending;
+        try { ConfigStore.Save(_config); }
+        catch (Exception ex) { Log.Error("Save failed", ex); }
         try
         {
             var exe = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(exe)) return;
+            Log.Info("Endpoint names do not match their channels. Asking Windows for permission to rename them.");
             Process.Start(new ProcessStartInfo(exe, "--rename-cables")
             {
                 UseShellExecute = true,
@@ -1034,51 +1106,27 @@ public sealed class AudioEngine : IDisposable
         }
     }
 
-    private bool NamesNeedRename()
+    private string MismatchSignature()
     {
+        var parts = new List<string>();
         foreach (var (channel, expected) in VacRenamer.Names)
         {
-            if (!_virtualInputs.TryGetValue(channel, out var renderId)) continue;
-            if (!TryFindDevice(_render, renderId, out var render)) return true;
-            if (!VacRenamer.Matches(Friendly(render), expected)) return true;
+            if (_virtualInputs.TryGetValue(channel, out var renderId) &&
+                TryFindDevice(_render, renderId, out var render) &&
+                !VacRenamer.Matches(Friendly(render), expected))
+                parts.Add(EndpointIds.Key(render.ID) + "=" + expected);
             if (_virtualCaptures.TryGetValue(channel, out var captureId) &&
                 TryFindDevice(_capture, captureId, out var capture) &&
                 !VacRenamer.Matches(Friendly(capture), expected))
-                return true;
+                parts.Add(EndpointIds.Key(capture.ID) + "=" + expected);
         }
-        return false;
+        return string.Join("|", parts);
     }
 
     private static string Friendly(MMDevice device)
     {
         try { return device.FriendlyName; }
         catch { return device.ID; }
-    }
-
-    private void AssignDefaultCables()
-    {
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
-        {
-            var key = channel.Key();
-            if (_config.CableAssignments.TryGetValue(key, out var assigned) &&
-                _cables.Any(cable => SameDevice(cable.RenderId, assigned)))
-            {
-                used.Add(EndpointIds.Key(assigned));
-                continue;
-            }
-
-            var next = _cables.FirstOrDefault(cable => !used.Contains(EndpointIds.Key(cable.RenderId)));
-            if (next == null)
-            {
-                _config.CableAssignments.Remove(key);
-                continue;
-            }
-
-            _config.CableAssignments[key] = next.RenderId;
-            used.Add(EndpointIds.Key(next.RenderId));
-            ScheduleSave();
-        }
     }
 
     private void UpdateMix()

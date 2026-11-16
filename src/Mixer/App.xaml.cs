@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
 using Mixer.Audio;
@@ -19,8 +20,14 @@ public partial class App : System.Windows.Application
     private MixerConfig? _config;
     private MainViewModel? _viewModel;
     private readonly object _readingGate = new();
+    private DispatcherTimer? _dialUi;
     private ChatMixReading _latestReading;
-    private int _readingQueued;
+    private int _dialQueued;
+    private bool _dialDirty;
+    private long _lastDialLog;
+    private int _audioKnob = int.MinValue;
+    private int _audioGame = int.MinValue;
+    private int _audioChat = int.MinValue;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -110,29 +117,82 @@ public partial class App : System.Windows.Application
 
     private void OnChatMixReading(object? sender, ChatMixReading reading)
     {
-        if (_engine != null)
+        var started = Stopwatch.GetTimestamp();
+        if (ApplyAudio(reading))
+            LogDial(reading, started);
+
+        lock (_readingGate)
         {
-            if (reading.Kind == ChatMixReportKind.Levels && reading.HasLevels && reading.Game >= 0)
-                _engine.ApplyChatMix(reading.Game, reading.Chat);
-            else if (reading.Kind == ChatMixReportKind.Knob)
-                _engine.ApplyKnobPosition(reading.Knob);
+            _latestReading = reading;
+            _dialDirty = true;
         }
 
-        lock (_readingGate) _latestReading = reading;
-        if (Interlocked.CompareExchange(ref _readingQueued, 1, 0) == 0)
-            Dispatcher.BeginInvoke(DispatcherPriority.Render, DrainChatMix);
+        if (Interlocked.CompareExchange(ref _dialQueued, 1, 0) == 0)
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, StartDialUi);
     }
 
-    private void DrainChatMix()
+    private bool ApplyAudio(ChatMixReading reading)
+    {
+        if (_engine == null) return false;
+        if (reading.Kind == ChatMixReportKind.Levels && reading.HasLevels && reading.Game >= 0)
+        {
+            if (reading.Game == _audioGame && reading.Chat == _audioChat) return false;
+            _audioGame = reading.Game;
+            _audioChat = reading.Chat;
+            _engine.ApplyChatMix(reading.Game, reading.Chat);
+            return true;
+        }
+
+        if (reading.Kind != ChatMixReportKind.Knob || reading.Knob == _audioKnob) return false;
+        _audioKnob = reading.Knob;
+        _engine.ApplyKnobPosition(reading.Knob);
+        return true;
+    }
+
+    private void LogDial(ChatMixReading reading, long started)
+    {
+        var now = Environment.TickCount64;
+        if (now - _lastDialLog < 1000) return;
+        _lastDialLog = now;
+        var microseconds = (Stopwatch.GetTimestamp() - started) * 1_000_000L / Stopwatch.Frequency;
+        Log.Info($"Dial {reading.Kind} audio {microseconds}us");
+    }
+
+    private void StartDialUi()
+    {
+        _dialUi ??= new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render, (_, _) => PaintDial(), Dispatcher);
+        PaintDial();
+    }
+
+    private void PaintDial()
     {
         ChatMixReading reading;
-        lock (_readingGate) reading = _latestReading;
-        Interlocked.Exchange(ref _readingQueued, 0);
-        _viewModel?.OnChatMix(reading);
-        bool newer;
-        lock (_readingGate) newer = !reading.Equals(_latestReading);
-        if (newer && Interlocked.CompareExchange(ref _readingQueued, 1, 0) == 0)
-            Dispatcher.BeginInvoke(DispatcherPriority.Render, DrainChatMix);
+        bool dirty;
+        lock (_readingGate)
+        {
+            reading = _latestReading;
+            dirty = _dialDirty;
+            _dialDirty = false;
+        }
+
+        if (dirty)
+            _viewModel?.ShowDial(reading);
+
+        lock (_readingGate)
+            dirty = _dialDirty;
+        if (dirty)
+        {
+            if (_dialUi is { IsEnabled: false })
+                _dialUi.Start();
+            return;
+        }
+
+        _dialUi?.Stop();
+        Interlocked.Exchange(ref _dialQueued, 0);
+        lock (_readingGate)
+            dirty = _dialDirty;
+        if (dirty && Interlocked.CompareExchange(ref _dialQueued, 1, 0) == 0 && _dialUi is { IsEnabled: false })
+            _dialUi.Start();
     }
 
     private void ShowExisting() => Dispatcher.BeginInvoke(() => _window?.ShowFromTray());

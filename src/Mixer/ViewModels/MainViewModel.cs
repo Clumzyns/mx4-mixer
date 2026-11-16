@@ -318,7 +318,10 @@ public sealed class MainViewModel : ObservableObject
         private set => Set(ref _chatMixDetail, value);
     }
 
-    public void OnChatMix(ChatMixReading reading)
+    /// <summary>
+    /// Paints the latest dial reading. Audio gains are already applied on the HID thread.
+    /// </summary>
+    public void ShowDial(ChatMixReading reading)
     {
         ChatMixConnected = reading.Connected;
         if (!string.IsNullOrEmpty(reading.RawReport))
@@ -326,17 +329,31 @@ public sealed class MainViewModel : ObservableObject
 
         if (reading.Kind == ChatMixReportKind.Knob)
         {
-            ApplyKnob(reading.Knob);
+            _lastKnobPosition = reading.Knob;
+            var max = Math.Max(1, _config.VolumeKnobMax);
+            var percent = ChatMixMath.VolumeFromKnob(reading.Knob, max, InvertVolumeKnob);
+            _masterSync++;
+            try { MasterVolume = percent; }
+            finally { _masterSync--; }
+            ChatMixDetail = $"Volume knob {reading.Knob}/{max} → master {percent}.";
             return;
         }
 
         if (reading.Kind == ChatMixReportKind.Levels && reading.HasLevels && reading.Game >= 0 && ChatMixEnabled)
         {
             var balance = ChatMixMath.FromLevels(reading.Game, reading.Chat);
-            PushBalance(balance, reading.Game, reading.Chat);
+            _balanceSync++;
+            try { ChatMixBalance = balance; }
+            finally { _balanceSync--; }
+            _chatMixGame = reading.Game;
+            _chatMixChat = reading.Chat;
+            Raise(nameof(ChatMixReadout));
+            if (_config.ChatMixBalance != balance)
+                _config.ChatMixBalance = balance;
         }
 
-        ChatMixDetail = reading.Detail;
+        if (!string.IsNullOrEmpty(reading.Detail))
+            ChatMixDetail = reading.Detail;
     }
 
     private void SetMasterPercent(int percent)
@@ -346,27 +363,6 @@ public sealed class MainViewModel : ObservableObject
         try { MasterVolume = percent; }
         finally { _masterSync--; }
         _engine.SetMasterVolume(percent / 100f);
-    }
-
-    private void PushBalance(int balance, int game, int chat)
-    {
-        _balanceSync++;
-        try
-        {
-            ChatMixBalance = balance;
-        }
-        finally
-        {
-            _balanceSync--;
-        }
-
-        _chatMixGame = game;
-        _chatMixChat = chat;
-        Raise(nameof(ChatMixReadout));
-        Raise(nameof(ChatMixBalanceLabel));
-        if (_config.ChatMixBalance != balance)
-            _config.ChatMixBalance = balance;
-        _engine.ApplyChatMix(game, chat);
     }
 
     private void ApplyKnob(int position)

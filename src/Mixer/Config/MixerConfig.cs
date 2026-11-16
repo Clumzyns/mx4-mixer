@@ -15,7 +15,6 @@ public sealed class MixerConfig
     public bool StartWithWindows { get; set; } = true;
     public bool StartMinimized { get; set; }
     public bool CloseToTray { get; set; } = true;
-    public bool CableNamesApplied { get; set; }
     public bool ChatMixEnabled { get; set; } = true;
     /// <summary>0 is Game only, 100 is Chat only, 50 keeps both full.</summary>
     public int ChatMixBalance { get; set; } = 50;
@@ -33,6 +32,7 @@ public sealed class MixerConfig
     public Dictionary<string, bool> AppMuted { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> CableAssignments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> CableCaptures { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, int> CableLines { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public static MixerConfig CreateDefault()
     {
@@ -66,6 +66,9 @@ public sealed class MixerConfig
         CableCaptures = Normalize(CableCaptures, static value => value?.Trim() ?? "");
         foreach (var key in CableCaptures.Where(pair => string.IsNullOrWhiteSpace(pair.Value)).Select(pair => pair.Key).ToList())
             CableCaptures.Remove(key);
+        CableLines = Normalize(CableLines, static value => value is > 0 and < 65 ? value : 0);
+        foreach (var key in CableLines.Where(pair => pair.Value <= 0).Select(pair => pair.Key).ToList())
+            CableLines.Remove(key);
 
         ChatMixBalance = Math.Clamp(ChatMixBalance, 0, 100);
         MasterVolume = VolumeMath.NormalizeStored(MasterVolume);

@@ -11,32 +11,41 @@ internal static class VacCables
     public static IReadOnlyList<VacCable> Discover(
         IEnumerable<(string Id, string Name)> render,
         IEnumerable<(string Id, string Name)> capture,
+        IReadOnlyDictionary<string, string>? captureByRender = null) =>
+        Discover(render.Select(device => (device.Id, device.Name, 0)), capture.Select(device => (device.Id, device.Name, 0)), captureByRender);
+
+    public static IReadOnlyList<VacCable> Discover(
+        IEnumerable<(string Id, string Name, int Line)> render,
+        IEnumerable<(string Id, string Name, int Line)> capture,
         IReadOnlyDictionary<string, string>? captureByRender = null)
     {
         var playback = new Dictionary<string, (string Id, string Name, int Order)>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in render)
         {
-            if (!TryKey(device.Name, out var key, out var order)) continue;
-            playback[key] = (device.Id, device.Name, order);
+            if (!TryKey(device.Name, out var key, out var order) && device.Line <= 0) continue;
+            var line = device.Line > 0 ? device.Line : order < 1000 ? order : 0;
+            playback[line > 0 ? "line " + line : key] = (device.Id, device.Name, line > 0 ? line : order);
         }
 
         var recording = new Dictionary<string, (string Id, int Order)>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in capture)
         {
-            if (!TryKey(device.Name, out var key, out var order)) continue;
-            recording[key] = (device.Id, order);
+            if (!TryKey(device.Name, out var key, out var order) && device.Line <= 0) continue;
+            var line = device.Line > 0 ? device.Line : order < 1000 ? order : 0;
+            recording[line > 0 ? "line " + line : key] = (device.Id, line > 0 ? line : order);
         }
 
         var cables = new List<VacCable>();
         foreach (var (key, play) in playback)
         {
             recording.TryGetValue(key, out var rec);
+            var line = play.Order is > 0 and < 1000 ? play.Order : 0;
             cables.Add(new VacCable
             {
                 Key = key,
                 RenderId = play.Id,
                 CaptureId = rec.Id,
-                Label = LabelOf(play.Name),
+                Label = line > 0 ? "Line " + line : LabelOf(play.Name),
                 Order = play.Order
             });
         }
@@ -51,8 +60,10 @@ internal static class VacCables
             .ToList();
         foreach (var cable in cables.Where(cable => string.IsNullOrWhiteSpace(cable.CaptureId)).OrderBy(cable => cable.Order))
         {
-            var match = freeCaptures.FirstOrDefault(item => item.Order == cable.Order);
-            if (string.IsNullOrWhiteSpace(match.Id))
+            var match = cable.Order is > 0 and < 1000
+                ? freeCaptures.FirstOrDefault(item => item.Order == cable.Order)
+                : default;
+            if (string.IsNullOrWhiteSpace(match.Id) && cable.Order is not (> 0 and < 1000))
                 match = freeCaptures.FirstOrDefault();
             if (string.IsNullOrWhiteSpace(match.Id)) continue;
             cable.CaptureId = match.Id;
@@ -71,7 +82,11 @@ internal static class VacCables
                 var existing = cables.FirstOrDefault(cable => string.Equals(EndpointIds.Key(cable.RenderId), renderKey, StringComparison.OrdinalIgnoreCase));
                 if (existing != null)
                 {
-                    if (rec.Id != null) existing.CaptureId = rec.Id;
+                    var savedLine = rec.Line;
+                    if (rec.Id != null &&
+                        (existing.Order is not (> 0 and < 1000) || savedLine <= 0 || savedLine == existing.Order) &&
+                        string.IsNullOrWhiteSpace(existing.CaptureId))
+                        existing.CaptureId = rec.Id;
                     continue;
                 }
                 cables.Add(new VacCable
