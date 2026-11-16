@@ -138,17 +138,23 @@ public sealed class MainViewModel : ObservableObject
         {
             if (!Set(ref _startWithWindows, value)) return;
             _config.StartWithWindows = value;
-            try
+            var enabled = value;
+            ThreadPool.QueueUserWorkItem(_ =>
             {
-                Autostart.Set(value);
-                Status = value ? "Mixer will start with Windows." : "Mixer will not start with Windows.";
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Startup registration failed", ex);
-                Status = "Couldn't update the Windows startup entry.";
-            }
-            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+                try
+                {
+                    Autostart.Set(enabled);
+                    System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+                        Status = enabled ? "Mixer will start with Windows." : "Mixer will not start with Windows.");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Startup registration failed", ex);
+                    System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+                        Status = "Couldn't update the Windows startup entry.");
+                }
+            });
+            ConfigStore.SaveSoon(_config);
         }
     }
 
@@ -159,7 +165,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (!Set(ref _closeToTray, value)) return;
             _config.CloseToTray = value;
-            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+            ConfigStore.SaveSoon(_config);
         }
     }
 
@@ -170,7 +176,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (!Set(ref _startMinimized, value)) return;
             _config.StartMinimized = value;
-            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+            ConfigStore.SaveSoon(_config);
         }
     }
 
@@ -190,7 +196,7 @@ public sealed class MainViewModel : ObservableObject
             _chatMix.Enabled = value;
             if (!value)
                 ChatMixDetail = "USB dial reading is off. The slider still sets Game and Chat.";
-            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+            ConfigStore.SaveSoon(_config);
         }
     }
 
@@ -205,7 +211,7 @@ public sealed class MainViewModel : ObservableObject
             if (_lastKnobPosition >= 0)
                 ApplyKnob(_lastKnobPosition);
             else
-                try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+                ConfigStore.SaveSoon(_config);
         }
     }
 

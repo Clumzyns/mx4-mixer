@@ -62,6 +62,54 @@ public static class ConfigStore
         File.Move(temp, FilePath, overwrite: true);
     }
 
+    /// <summary>
+    /// Writes the latest config off the UI thread, after edits have settled.
+    /// </summary>
+    public static void SaveSoon(MixerConfig config)
+    {
+        lock (SaveGate)
+        {
+            _pendingConfig = config;
+            _saveGeneration++;
+        }
+        if (Interlocked.Exchange(ref _saveSoonQueued, 1) == 1) return;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            using var wait = new ManualResetEventSlim(false);
+            wait.Wait(400);
+            MixerConfig? latest;
+            int seen;
+            lock (SaveGate)
+            {
+                latest = _pendingConfig;
+                seen = _saveGeneration;
+            }
+            try
+            {
+                if (latest != null)
+                    Save(latest);
+            }
+            catch (Exception ex)
+            {
+                Services.Log.Error("Save failed", ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _saveSoonQueued, 0);
+                lock (SaveGate)
+                {
+                    if (_pendingConfig != null && _saveGeneration != seen)
+                        SaveSoon(_pendingConfig);
+                }
+            }
+        });
+    }
+
+    private static readonly object SaveGate = new();
+    private static MixerConfig? _pendingConfig;
+    private static int _saveSoonQueued;
+    private static int _saveGeneration;
+
     private static bool HasProperty(string json, string name)
     {
         try

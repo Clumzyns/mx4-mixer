@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -14,8 +15,15 @@ public sealed class AudioEngine : IDisposable
 {
     private readonly MixerConfig _config;
     private readonly Dispatcher _dispatcher;
-    private readonly MMDeviceEnumerator _enumerator;
+    private readonly BlockingCollection<Action> _inbox = new();
     private readonly DeviceNotifications _notifications;
+    private MMDeviceEnumerator _enumerator = null!;
+    private Thread? _audioThread;
+    private int _wakeQueued;
+    private int _scanRequested;
+    private int _scanImmediate;
+    private long _nextScanAllowed;
+    private long _nextPeaks;
     private readonly Dictionary<string, MMDevice> _render = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, MMDevice> _capture = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, ProcessInfo> _procs = new();
@@ -23,11 +31,8 @@ public sealed class AudioEngine : IDisposable
     private readonly Dictionary<uint, string> _routed = new();
     private readonly Dictionary<string, float> _appShown = new(StringComparer.OrdinalIgnoreCase);
     private readonly float[] _channelShown = new float[5];
-    private readonly Thread _meterThread;
-    private readonly DispatcherTimer _scanTimer;
     private PeakUpdate? _pendingPeaks;
     private int _peaksDirty;
-    private readonly DispatcherTimer _saveTimer;
     private AppEndpointRouter? _router;
     private List<LiveSession> _live = [];
     private string? _masterOutputId;
@@ -50,34 +55,15 @@ public sealed class AudioEngine : IDisposable
     private string _backendName = "";
     private readonly LiveMix _gains = new();
     private readonly CableVolume _cableVolume;
-    private int _gainQueuedFlag;
-    private int _saveQueued;
 
     public AudioEngine(MixerConfig config)
     {
         _config = config;
         _dispatcher = System.Windows.Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
-        _cableVolume = new CableVolume(_dispatcher, ApplyEndpointVolume, _gains);
-        _enumerator = new MMDeviceEnumerator();
+        _cableVolume = new CableVolume(ApplyEndpointVolume, _gains);
         _notifications = new DeviceNotifications(this);
-        _meterThread = new Thread(MeterLoop) { IsBackground = true, Name = "Mixer.Meters" };
-        _scanTimer = new DispatcherTimer(SafeTime.Milliseconds(800), DispatcherPriority.Background, (_, _) => Scan(), _dispatcher);
-        _saveTimer = new DispatcherTimer { Interval = SafeTime.Milliseconds(500) };
         _gains.Load(config);
         SetKnobInverted(config.InvertVolumeKnob);
-        _saveTimer.Tick += (_, _) =>
-        {
-        _saveTimer.Stop();
-        var remaining = Volatile.Read(ref _saveNotBefore) - Environment.TickCount64;
-        if (remaining > 0)
-        {
-            ArmSaveTimer();
-            return;
-        }
-        Interlocked.Exchange(ref _saveQueued, 0);
-        try { ConfigStore.Save(_config); }
-        catch (Exception ex) { Log.Error("Save failed", ex); }
-        };
     }
 
     public event EventHandler<MixerSnapshot>? StructureChanged;
@@ -85,25 +71,132 @@ public sealed class AudioEngine : IDisposable
     public void Start()
     {
         Log.Info($"Mixer {AppInfo.Version} on Windows build {Environment.OSVersion.Version.Build}.");
+        _audioThread = new Thread(RunAudio)
+        {
+            IsBackground = true,
+            Name = "Mixer.Audio"
+        };
+        _audioThread.SetApartmentState(ApartmentState.MTA);
+        _audioThread.Start();
+    }
+
+    private void RunAudio()
+    {
         try
         {
-            var hr = _enumerator.RegisterEndpointNotificationCallback(_notifications);
-            if (hr < 0) Log.Info($"Device notifications unavailable (0x{hr:X8}).");
+            _enumerator = new MMDeviceEnumerator();
+            try
+            {
+                var hr = _enumerator.RegisterEndpointNotificationCallback(_notifications);
+                if (hr < 0) Log.Info($"Device notifications unavailable (0x{hr:X8}).");
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Device notifications unavailable", ex);
+            }
+
+            _router = AppEndpointRouter.TryCreate();
+            _status = _router == null
+                ? "Per-app routing is unavailable on this Windows build. Volume and mute still work."
+                : "Windows playback is the Game cable and calls use Chat. The mix plays on the master output.";
+            RefreshDevices();
+            TryRestoreMasters();
+            Scan();
+            _nextScanAllowed = Environment.TickCount64 + 800;
+            while (!_disposed)
+            {
+                DrainInbox(WaitMs());
+                if (_disposed) break;
+                ServiceAudio();
+            }
         }
         catch (Exception ex)
         {
-            Log.Error("Device notifications unavailable", ex);
+            Log.Error("Audio thread stopped", ex);
+        }
+        finally
+        {
+            StopMix();
+            try { _enumerator?.UnregisterEndpointNotificationCallback(_notifications); } catch { /* already gone */ }
+            DisposeDevices(_render);
+            DisposeDevices(_capture);
+            try { _router?.Dispose(); } catch { /* ignore */ }
+            try { _enumerator?.Dispose(); } catch { /* ignore */ }
+            try { ConfigStore.Save(_config); } catch { /* exit path */ }
+        }
+    }
+
+    private int WaitMs()
+    {
+        var now = Environment.TickCount64;
+        var wait = (int)Math.Max(1, _nextPeaks - now);
+        if (wait <= 0 || _nextPeaks == 0) wait = 33;
+        if (Volatile.Read(ref _scanRequested) != 0)
+        {
+            var due = Volatile.Read(ref _scanImmediate) != 0 ? now : _nextScanAllowed;
+            wait = (int)Math.Min(wait, Math.Max(1, due - now));
+        }
+        return Math.Clamp(wait, 1, 800);
+    }
+
+    private void DrainInbox(int waitMs)
+    {
+        if (!_inbox.TryTake(out var work, waitMs))
+        {
+            Interlocked.Exchange(ref _wakeQueued, 0);
+            return;
         }
 
-        _router = AppEndpointRouter.TryCreate();
-        _status = _router == null
-            ? "Per-app device routing is unavailable on this Windows build. Volume and mute still work."
-            : "Default follows the master output. A channel can pin its own device.";
-        RefreshDevices();
-        TryRestoreMasters();
+        Interlocked.Exchange(ref _wakeQueued, 0);
+        Invoke(work);
+        while (_inbox.TryTake(out work))
+            Invoke(work);
+    }
+
+    private void Invoke(Action work)
+    {
+        try { work(); }
+        catch (Exception ex) { Log.Error("Audio command failed", ex); }
+    }
+
+    private void ServiceAudio()
+    {
+        var now = Environment.TickCount64;
+        if (now >= _nextPeaks)
+        {
+            _nextPeaks = now + 33;
+            try { PublishPeaks(); } catch (Exception ex) { Log.Error("Peak meter failed", ex); }
+            try { _mix?.LogDrift(); } catch (Exception ex) { Log.Error("Drift log failed", ex); }
+        }
+
+        var immediate = Volatile.Read(ref _scanImmediate) != 0;
+        var due = Volatile.Read(ref _scanRequested) != 0 && (immediate || now >= _nextScanAllowed);
+        if (!due) return;
+        Interlocked.Exchange(ref _scanImmediate, 0);
+        Interlocked.Exchange(ref _scanRequested, 0);
         Scan();
-        _meterThread.Start();
-        _scanTimer.Start();
+        _nextScanAllowed = Environment.TickCount64 + 800;
+    }
+
+    private void Post(Action work)
+    {
+        if (_disposed) return;
+        try { _inbox.Add(work); }
+        catch (InvalidOperationException) { /* shutting down */ }
+    }
+
+    private void Wake()
+    {
+        if (Interlocked.Exchange(ref _wakeQueued, 1) == 1) return;
+        try { _inbox.Add(static () => { }); }
+        catch (InvalidOperationException) { /* shutting down */ }
+    }
+
+    private void RequestScanSoon(bool immediate)
+    {
+        Interlocked.Exchange(ref _scanRequested, 1);
+        if (immediate) Interlocked.Exchange(ref _scanImmediate, 1);
+        Wake();
     }
 
     public bool TryConsumePeaks(out PeakUpdate peaks)
@@ -118,17 +211,21 @@ public sealed class AudioEngine : IDisposable
         return true;
     }
 
-    public void RequestScan()
+    public void RequestScan() => RequestScanSoon(immediate: false);
+
+    public void SetMasterOutput(string deviceId) => Post(() =>
     {
-        if (_disposed) return;
-        _dispatcher.BeginInvoke(new Action(Scan));
-    }
+        SetMaster(DataFlow.Render, deviceId, output: true);
+        RequestScanSoon(immediate: true);
+    });
 
-    public void SetMasterOutput(string deviceId) => SetMaster(DataFlow.Render, deviceId, output: true);
+    public void SetMasterInput(string deviceId) => Post(() =>
+    {
+        SetMaster(DataFlow.Capture, deviceId, output: false);
+        RequestScanSoon(immediate: true);
+    });
 
-    public void SetMasterInput(string deviceId) => SetMaster(DataFlow.Capture, deviceId, output: false);
-
-    public void SetMicMuted(bool muted)
+    public void SetMicMuted(bool muted) => Post(() =>
     {
         if (_masterInputId == null || !_capture.TryGetValue(_masterInputId, out var device))
         {
@@ -148,7 +245,7 @@ public sealed class AudioEngine : IDisposable
             _status = "Couldn't mute the microphone.";
         }
         Notify();
-    }
+    });
 
     public void SetMasterVolume(float volume)
     {
@@ -224,7 +321,7 @@ public sealed class AudioEngine : IDisposable
         ScheduleSave();
     }
 
-    public void SetChannelDevice(ChannelId id, string? deviceId)
+    public void SetChannelDevice(ChannelId id, string? deviceId) => Post(() =>
     {
         if (id is ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)
             deviceId = null;
@@ -236,69 +333,83 @@ public sealed class AudioEngine : IDisposable
             ? $"{id.Title()} follows the master output."
             : $"{id.Title()} is pinned to its own device.";
         Notify();
-    }
+        RequestScanSoon(immediate: true);
+    });
 
     public void Assign(string exeKey, ChannelId channel)
     {
         if (string.IsNullOrWhiteSpace(exeKey)) return;
-        _config.Assignments[exeKey.Trim().ToLowerInvariant()] = channel.Key();
-        _routed.Clear();
-        ApplyGains();
-        RouteAll();
-        ScheduleSave();
-        Notify();
+        var key = exeKey.Trim().ToLowerInvariant();
+        Post(() =>
+        {
+            _config.Assignments[key] = channel.Key();
+            _routed.Clear();
+            ApplyGains();
+            RouteAll();
+            ScheduleSave();
+            Notify();
+        });
     }
 
     public void SetAppBaseVolume(string exeKey, float volume)
     {
         if (string.IsNullOrWhiteSpace(exeKey)) return;
-        _config.BaseVolumes[exeKey.Trim().ToLowerInvariant()] = VolumeMath.Clamp(volume);
-        QueueGain();
-        ScheduleSave();
+        var key = exeKey.Trim().ToLowerInvariant();
+        var level = VolumeMath.Clamp(volume);
+        Post(() =>
+        {
+            _config.BaseVolumes[key] = level;
+            ApplyGains();
+            ScheduleSave();
+        });
     }
 
     public void SetCable(ChannelId channel, string renderId)
     {
         if (channel is not (ChannelId.Game or ChannelId.Chat or ChannelId.Media or ChannelId.Aux)) return;
-        _config.CableAssignments[channel.Key()] = renderId;
-        _routed.Clear();
-        ScheduleSave();
-        RequestScan();
+        Post(() =>
+        {
+            _config.CableAssignments[channel.Key()] = renderId;
+            _routed.Clear();
+            ScheduleSave();
+            RequestScanSoon(immediate: true);
+        });
     }
 
     public int CloseSteelSeries()
     {
-        var closed = SteelSeriesApps.Close();
-        _sonarWarning = closed > 0
-            ? $"Closed {closed} SteelSeries process{(closed == 1 ? "" : "es")}."
-            : "No SteelSeries process was running.";
-        RequestScan();
-        return closed;
+        Post(() =>
+        {
+            var closed = SteelSeriesApps.Close();
+            _sonarWarning = closed > 0
+                ? $"Closed {closed} SteelSeries process{(closed == 1 ? "" : "es")}."
+                : "No SteelSeries process was running.";
+            Notify();
+            RequestScanSoon(immediate: true);
+        });
+        return 0;
     }
 
     public void SetAppMuted(string exeKey, bool muted)
     {
         if (string.IsNullOrWhiteSpace(exeKey)) return;
-        _config.AppMuted[exeKey.Trim().ToLowerInvariant()] = muted;
-        QueueGain();
-        ScheduleSave();
+        var key = exeKey.Trim().ToLowerInvariant();
+        Post(() =>
+        {
+            _config.AppMuted[key] = muted;
+            ApplyGains();
+            ScheduleSave();
+        });
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _scanTimer.Stop();
-        _saveTimer.Stop();
-        StopMix();
+        Wake();
+        try { _audioThread?.Join(2000); } catch { /* background */ }
         try { _cableVolume.Dispose(); } catch { /* already stopped */ }
-        try { if (_meterThread.IsAlive) _meterThread.Join(400); } catch { /* background */ }
-        try { ConfigStore.Save(_config); } catch { /* exit path */ }
-        try { _enumerator.UnregisterEndpointNotificationCallback(_notifications); } catch { /* already gone */ }
-        DisposeDevices(_render);
-        DisposeDevices(_capture);
-        try { _router?.Dispose(); } catch { /* ignore */ }
-        try { _enumerator.Dispose(); } catch { /* ignore */ }
+        _inbox.Dispose();
     }
 
     private void SetMaster(DataFlow flow, string deviceId, bool output)
@@ -585,16 +696,6 @@ public sealed class AudioEngine : IDisposable
         return ChannelId.System;
     }
 
-    private void MeterLoop()
-    {
-        while (!_disposed)
-        {
-            try { PublishPeaks(); }
-            catch (Exception ex) { Log.Error("Peak meter failed", ex); }
-            Thread.Sleep(33);
-        }
-    }
-
     private void PublishPeaks()
     {
         if (_disposed) return;
@@ -655,7 +756,10 @@ public sealed class AudioEngine : IDisposable
         Volatile.Write(ref _peaksDirty, 1);
     }
 
-    private void ApplyEndpointVolume(ChannelId id, float volume, bool muted)
+    private void ApplyEndpointVolume(ChannelId id, float volume, bool muted) =>
+        Post(() => ApplyEndpointVolumeCore(id, volume, muted));
+
+    private void ApplyEndpointVolumeCore(ChannelId id, float volume, bool muted)
     {
         var next = VolumeMath.Clamp(volume);
         var settings = _config.Channel(id);
@@ -811,7 +915,7 @@ public sealed class AudioEngine : IDisposable
             };
         }).ToList();
 
-        StructureChanged?.Invoke(this, new MixerSnapshot
+        var snapshot = new MixerSnapshot
         {
             Outputs = outputs,
             Inputs = inputs,
@@ -827,7 +931,11 @@ public sealed class AudioEngine : IDisposable
             SonarWarning = _sonarWarning,
             BackendName = _backendName,
             Cables = _cables.Select(cable => new DeviceSnapshot { Id = cable.RenderId, Name = cable.Label }).ToList()
-        });
+        };
+        if (_dispatcher.CheckAccess())
+            StructureChanged?.Invoke(this, snapshot);
+        else
+            _dispatcher.BeginInvoke(() => StructureChanged?.Invoke(this, snapshot));
     }
 
     private static DeviceSnapshot DeviceSnap(MMDevice device)
@@ -851,48 +959,21 @@ public sealed class AudioEngine : IDisposable
             _routed.Remove(pid);
     }
 
+    private int _gainQueued;
+
     private void QueueGain()
     {
-        if (Interlocked.Exchange(ref _gainQueuedFlag, 1) == 1) return;
-        ThreadPool.QueueUserWorkItem(_ =>
-        {
-            try
-            {
-                if (!_disposed) ApplyGains();
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Session gain failed", ex);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _gainQueuedFlag, 0);
-            }
-        });
+        Interlocked.Exchange(ref _gainQueued, 1);
+        Post(RunGain);
     }
 
-    private long _saveNotBefore;
-
-    private void ScheduleSave()
+    private void RunGain()
     {
-        Volatile.Write(ref _saveNotBefore, Environment.TickCount64 + 500);
-        if (Interlocked.Exchange(ref _saveQueued, 1) == 1) return;
-        if (_dispatcher.CheckAccess())
-            ArmSaveTimer();
-        else
-            _dispatcher.BeginInvoke(DispatcherPriority.Background, ArmSaveTimer);
+        while (Interlocked.Exchange(ref _gainQueued, 0) == 1)
+            ApplyGains();
     }
 
-    private void ArmSaveTimer()
-    {
-        if (_disposed) return;
-        var wait = Volatile.Read(ref _saveNotBefore) - Environment.TickCount64;
-        if (wait < 1) wait = 1;
-        if (wait > 2000) wait = 2000;
-        _saveTimer.Interval = SafeTime.Milliseconds(wait);
-        _saveTimer.Stop();
-        _saveTimer.Start();
-    }
+    private void ScheduleSave() => ConfigStore.SaveSoon(_config);
 
     private static void DisposeDevices(Dictionary<string, MMDevice> map)
     {

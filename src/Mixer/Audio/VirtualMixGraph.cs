@@ -18,7 +18,9 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
     private readonly List<WasapiOut> _ownedOutputs = new();
     private readonly LiveMix _live;
     private ChannelTap[] _masterTaps = [];
-    private readonly float[] _frame = new float[2];
+    private float[] _mixLeft = new float[2048];
+    private float[] _mixRight = new float[2048];
+    private long _lastDriftLog;
     private bool _disposed;
 
     private VirtualMixGraph(WaveFormat outputFormat, LiveMix live)
@@ -82,28 +84,40 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         var bytesPerFrame = WaveFormat.BlockAlign > 0 ? WaveFormat.BlockAlign : channels * WaveFormat.BitsPerSample / 8;
         if (bytesPerFrame <= 0) return 0;
         var frames = count / bytesPerFrame;
+        if (frames <= 0) return 0;
+        if (_mixLeft.Length < frames) _mixLeft = new float[frames];
+        if (_mixRight.Length < frames) _mixRight = new float[frames];
+        Array.Clear(_mixLeft, 0, frames);
+        Array.Clear(_mixRight, 0, frames);
         var master = _live.Master;
         var taps = _masterTaps;
-        Span<float> gains = stackalloc float[taps.Length];
         for (var t = 0; t < taps.Length; t++)
-            gains[t] = taps[t].Gain;
-        Array.Clear(buffer, offset, count);
+        {
+            var gain = taps[t].Gain;
+            if (gain <= 0f) continue;
+            taps[t].MixInto(_mixLeft, _mixRight, frames, gain);
+        }
+
         for (var i = 0; i < frames; i++)
         {
-            float left = 0, right = 0;
-            for (var t = 0; t < taps.Length; t++)
-            {
-                if (gains[t] <= 0f || !taps[t].Ring.TryRead(_frame)) continue;
-                left += _frame[0] * gains[t];
-                right += _frame[1] * gains[t];
-            }
-
-            left = Math.Clamp(left * master, -1f, 1f);
-            right = Math.Clamp(right * master, -1f, 1f);
+            var left = Math.Clamp(_mixLeft[i] * master, -1f, 1f);
+            var right = Math.Clamp(_mixRight[i] * master, -1f, 1f);
             Encode(WaveFormat, buffer, offset + i * bytesPerFrame, channels, left, right);
         }
 
         return count;
+    }
+
+    public void LogDrift()
+    {
+        var now = Environment.TickCount64;
+        if (now - _lastDriftLog < 10000) return;
+        _lastDriftLog = now;
+        foreach (var (channel, tap) in _taps)
+        {
+            var (underrun, insert, overrun, buffered) = tap.TakeDrift();
+            Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered}");
+        }
     }
 
     public void CopyPeaks(Span<float> peaks)
@@ -200,23 +214,17 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
 
         public int Read(byte[] buffer, int offset, int count)
         {
-            MmThread.EnterProAudio();
             var channels = Math.Max(1, WaveFormat.Channels);
             var bytesPerFrame = WaveFormat.BlockAlign > 0 ? WaveFormat.BlockAlign : channels * WaveFormat.BitsPerSample / 8;
             if (bytesPerFrame <= 0) return 0;
             var frames = count / bytesPerFrame;
             var gain = _tap.Gain;
-            var frame = new float[2];
+            var lefts = new float[Math.Max(1, frames)];
+            var rights = new float[Math.Max(1, frames)];
+            if (gain > 0f)
+                _tap.MixInto(lefts, rights, frames, gain);
             for (var i = 0; i < frames; i++)
-            {
-                float left = 0, right = 0;
-                if (gain > 0f && _tap.Ring.TryRead(frame))
-                {
-                    left = Math.Clamp(frame[0] * gain, -1f, 1f);
-                    right = Math.Clamp(frame[1] * gain, -1f, 1f);
-                }
-                Encode(WaveFormat, buffer, offset + i * bytesPerFrame, channels, left, right);
-            }
+                Encode(WaveFormat, buffer, offset + i * bytesPerFrame, channels, Math.Clamp(lefts[i], -1f, 1f), Math.Clamp(rights[i], -1f, 1f));
 
             var written = frames * bytesPerFrame;
             if (written < count) Array.Clear(buffer, offset + written, count - written);
@@ -238,19 +246,48 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
             Separate = separate;
             _destRate = destRate;
             _resampler = new FrameResampler();
-            Ring = new FloatRing(destRate);
+            _ring = new DriftRing(destRate);
         }
 
         public ChannelId Channel { get; }
         public bool Separate { get; }
-        public FloatRing Ring { get; }
         public WasapiCapture? Capture { get; set; }
         public float Peak { get; private set; }
         public float Gain => _live.MixGain(Channel);
+        private readonly DriftRing _ring;
+        private float[] _pullL = new float[512];
+        private float[] _pullR = new float[512];
+        private int _underrun;
+        private int _insert;
+        private int _overrun;
+
+        public void MixInto(float[] left, float[] right, int frames, float gain)
+        {
+            if (frames <= 0) return;
+            if (_pullL.Length < frames)
+            {
+                _pullL = new float[frames];
+                _pullR = new float[frames];
+            }
+            var (missing, inserted, dropped, buffered) = _ring.Read(_pullL, _pullR, frames, gain);
+            for (var i = 0; i < frames; i++)
+            {
+                left[i] += _pullL[i];
+                right[i] += _pullR[i];
+            }
+            if (missing > 0) Interlocked.Add(ref _underrun, missing);
+            if (inserted > 0) Interlocked.Add(ref _insert, inserted);
+            if (dropped > 0) Interlocked.Add(ref _overrun, dropped);
+            Volatile.Write(ref _buffered, buffered);
+        }
+
+        private int _buffered;
+
+        public (int Underrun, int Insert, int Overrun, int Buffered) TakeDrift() =>
+            (Interlocked.Exchange(ref _underrun, 0), Interlocked.Exchange(ref _insert, 0), Interlocked.Exchange(ref _overrun, 0), Volatile.Read(ref _buffered));
 
         public void Write(byte[] buffer, int bytes, WaveFormat format)
         {
-            MmThread.EnterProAudio();
             var frames = Decode(buffer, bytes, format);
             if (frames <= 0) return;
             var outFrames = format.SampleRate == _destRate
@@ -259,7 +296,8 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
             if (_resampled.Length < outFrames * 2) _resampled = new float[outFrames * 2];
             var produced = _resampler.Process(_decode, frames, format.SampleRate, _destRate, _resampled);
             if (produced <= 0) return;
-            Ring.Write(_resampled.AsSpan(0, produced * 2));
+            var dropped = _ring.Write(_resampled, produced);
+            if (dropped > 0) Interlocked.Add(ref _overrun, dropped);
         }
 
         public void Dispose()
@@ -368,57 +406,119 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         }
     }
 
-    private sealed class FloatRing
+    /// <summary>
+    /// Stereo frames for one capture. The render clock drops or repeats a frame when this
+    /// source runs ahead of or behind the master device.
+    /// </summary>
+    private sealed class DriftRing
     {
-        private readonly float[] _data;
-        private readonly int _maxSamples;
+        private readonly float[] _left;
+        private readonly float[] _right;
+        private readonly int _capacity;
+        private readonly int _target;
+        private readonly int _period;
         private readonly object _gate = new();
         private int _read;
         private int _count;
+        private float _holdL;
+        private float _holdR;
 
-        public FloatRing(int sampleRate)
+        public DriftRing(int sampleRate)
         {
-            var periodFrames = Math.Max(1, sampleRate * PeriodMs / 1000);
-            _maxSamples = periodFrames * 2 * 2;
-            _data = new float[_maxSamples];
+            _period = Math.Max(32, sampleRate * PeriodMs / 1000);
+            _target = _period * 4;
+            _capacity = _period * 12;
+            _left = new float[_capacity];
+            _right = new float[_capacity];
         }
 
-        public void Write(ReadOnlySpan<float> samples)
+        public int Write(float[] interleaved, int frames)
         {
+            if (frames <= 0) return 0;
             lock (_gate)
             {
-                for (var i = 0; i < samples.Length; i++)
+                var dropped = 0;
+                for (var i = 0; i < frames; i++)
                 {
-                    if (_count == _data.Length)
+                    if (_count == _capacity)
                     {
-                        _read = (_read + 2) % _data.Length;
-                        _count -= 2;
+                        _read = (_read + 1) % _capacity;
+                        _count--;
+                        dropped++;
                     }
 
-                    _data[(_read + _count) % _data.Length] = samples[i];
+                    var at = (_read + _count) % _capacity;
+                    _left[at] = interleaved[i * 2];
+                    _right[at] = interleaved[i * 2 + 1];
                     _count++;
                 }
 
-                if (_count > _maxSamples)
+                if (_count > _target + _period * 2)
                 {
-                    var drop = _count - _maxSamples;
-                    if ((drop & 1) == 1) drop--;
-                    _read = (_read + drop) % _data.Length;
-                    _count -= drop;
+                    var extra = _count - (_target + _period);
+                    _read = (_read + extra) % _capacity;
+                    _count -= extra;
+                    dropped += extra;
                 }
+
+                return dropped;
             }
         }
 
-        public bool TryRead(float[] frame)
+        public (int Missing, int Inserted, int Dropped, int Buffered) Read(float[] left, float[] right, int frames, float gain)
         {
             lock (_gate)
             {
-                if (_count < 2) return false;
-                frame[0] = _data[_read];
-                frame[1] = _data[(_read + 1) % _data.Length];
-                _read = (_read + 2) % _data.Length;
-                _count -= 2;
-                return true;
+                var missing = 0;
+                var inserted = 0;
+                var dropped = 0;
+                if (_count > _target + _period)
+                {
+                    var extra = Math.Min(_count - _target, _period);
+                    _read = (_read + extra) % _capacity;
+                    _count -= extra;
+                    dropped += extra;
+                }
+                else if (_count + _period < _target && _count > 2 && frames > 1)
+                {
+                    inserted = 1;
+                }
+
+                var need = frames - inserted;
+                var take = Math.Min(_count, need);
+                for (var i = 0; i < take; i++)
+                {
+                    _holdL = _left[_read];
+                    _holdR = _right[_read];
+                    left[i] = _holdL * gain;
+                    right[i] = _holdR * gain;
+                    _read = (_read + 1) % _capacity;
+                    _count--;
+                }
+
+                if (inserted == 1 && take > 0)
+                {
+                    left[take] = _holdL * gain;
+                    right[take] = _holdR * gain;
+                    for (var i = take + 1; i < frames; i++)
+                    {
+                        left[i] = left[i - 1];
+                        right[i] = right[i - 1];
+                    }
+                }
+
+                var filled = take + inserted;
+                if (filled < frames)
+                {
+                    missing = frames - filled;
+                    for (var i = filled; i < frames; i++)
+                    {
+                        left[i] = _holdL * gain;
+                        right[i] = _holdR * gain;
+                    }
+                }
+
+                return (missing, inserted, dropped, _count);
             }
         }
     }

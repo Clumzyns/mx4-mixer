@@ -1,4 +1,3 @@
-using System.Windows.Threading;
 using NAudio.CoreAudioApi;
 using Mixer.Audio.Com;
 
@@ -13,7 +12,6 @@ internal sealed class CableVolume : IDisposable
 {
     internal static readonly Guid Own = new("8f4e2a1c-6b3d-4e90-9c17-5a2d8f0b6e41");
 
-    private readonly Dispatcher _dispatcher;
     private readonly Action<ChannelId, float, bool> _external;
     private readonly LiveMix _gains;
     private readonly object _gate = new();
@@ -24,9 +22,8 @@ internal sealed class CableVolume : IDisposable
     private readonly Thread _thread;
     private bool _disposed;
 
-    public CableVolume(Dispatcher dispatcher, Action<ChannelId, float, bool> external, LiveMix gains)
+    public CableVolume(Action<ChannelId, float, bool> external, LiveMix gains)
     {
-        _dispatcher = dispatcher;
         _external = external;
         _gains = gains;
         _thread = new Thread(Loop)
@@ -60,7 +57,7 @@ internal sealed class CableVolume : IDisposable
 
                 if (_bindings.Remove(link.Channel, out var previous))
                     _retired.Add(previous);
-                var created = new Binding(link.Channel, link.RenderId, link.CaptureId, _dispatcher, _external, _gains, RequestHold);
+                var created = new Binding(link.Channel, link.RenderId, link.CaptureId, _external, _gains, RequestHold);
                 created.Remember(link.Volume, link.Muted);
                 _bindings[link.Channel] = created;
                 Enqueue(link.Channel, link.Volume, link.Muted);
@@ -244,7 +241,6 @@ internal sealed class CableVolume : IDisposable
     private sealed class Binding
     {
         private readonly ChannelId _channel;
-        private readonly Dispatcher _dispatcher;
         private readonly Action<ChannelId, float, bool> _external;
         private readonly LiveMix _gains;
         private readonly Action<ChannelId> _hold;
@@ -262,12 +258,11 @@ internal sealed class CableVolume : IDisposable
         private bool? _loggedMute;
         private bool _closed;
 
-        public Binding(ChannelId channel, string renderId, string? captureId, Dispatcher dispatcher, Action<ChannelId, float, bool> external, LiveMix gains, Action<ChannelId> hold)
+        public Binding(ChannelId channel, string renderId, string? captureId, Action<ChannelId, float, bool> external, LiveMix gains, Action<ChannelId> hold)
         {
             _channel = channel;
             RenderId = renderId;
             CaptureId = captureId;
-            _dispatcher = dispatcher;
             _external = external;
             _gains = gains;
             _hold = hold;
@@ -412,12 +407,7 @@ internal sealed class CableVolume : IDisposable
         private void OnRender(AudioVolumeNotificationData data)
         {
             if (_closed || IsOwn(data)) return;
-            var volume = data.MasterVolume;
-            var muted = data.Muted;
-            _dispatcher.BeginInvoke(() =>
-            {
-                if (!_closed) _external(_channel, volume, muted);
-            });
+            _external(_channel, data.MasterVolume, data.Muted);
         }
 
         private void OnCapture(AudioVolumeNotificationData data)
