@@ -169,9 +169,9 @@ public partial class MainWindow : Window
         var width = ColumnScroll.ViewportWidth;
         var height = ColumnScroll.ViewportHeight;
         if (!double.IsNaN(width) && width > 0)
-            ColumnHost.Width = Math.Max(1120, width);
+            ColumnHost.Width = Math.Max(760, width);
         if (!double.IsNaN(height) && height > 0)
-            ColumnHost.Height = height;
+            ColumnHost.ClearValue(HeightProperty);
     }
 
     private void OutputCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -275,7 +275,7 @@ public partial class MainWindow : Window
     {
         while (source != null)
         {
-            if (source is Slider or ComboBox or Button or Thumb or RepeatButton or TextBoxBase)
+            if (source is Slider or ComboBox or Button or Thumb or RepeatButton or TextBoxBase or Controls.Fader or Controls.Dial)
                 return true;
             source = VisualTreeHelper.GetParent(source);
         }

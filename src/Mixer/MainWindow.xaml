@@ -5,330 +5,519 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Mixer"
         Icon="pack://application:,,,/Assets/mixer.ico"
-        Width="1240" Height="860"
-        MinWidth="980" MinHeight="740"
+        Width="1320" Height="900"
+        MinWidth="1120" MinHeight="800"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResize"
         Background="{StaticResource BgBrush}"
         Foreground="{StaticResource TextBrush}"
-        FontFamily="{StaticResource InterFont}"
-        FontSize="13"
+        FontFamily="{StaticResource LabelFont}"
+        FontSize="12"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
         Loaded="Window_Loaded">
   <shell:WindowChrome.WindowChrome>
-    <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="8"/>
+    <shell:WindowChrome CaptionHeight="56" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0"/>
   </shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <!-- Small all-caps label, like silkscreen on a panel. -->
+    <Style x:Key="Legend" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+    </Style>
+    <Style x:Key="LegendStrong" TargetType="TextBlock" BasedOn="{StaticResource Legend}">
+      <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+    </Style>
+    <!-- Big condensed numerals and channel names. -->
+    <Style x:Key="Numeral" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource DisplayFont}"/>
+      <Setter Property="FontStretch" Value="Condensed"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="44"/>
+      <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+      <Setter Property="LineHeight" Value="42"/>
+    </Style>
+    <Style x:Key="PortTag" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource InkBrush}"/>
+      <Setter Property="Padding" Value="9,0"/>
+      <Setter Property="Height" Value="30"/>
+    </Style>
+  </Window.Resources>
   <Grid x:Name="LayoutRoot">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" Height="40" Margin="12,0,4,0">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <Grid Width="22" Height="22" Margin="0,0,10,0">
-          <Border Background="#B6F23A" CornerRadius="6"/>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Border Width="2" Height="10" Background="#14180A" Margin="0.5,0" VerticalAlignment="Bottom"/>
-            <Border Width="2" Height="6" Background="#14180A" Margin="0.5,0" VerticalAlignment="Bottom"/>
-            <Border Width="2" Height="12" Background="#14180A" Margin="0.5,0" VerticalAlignment="Bottom"/>
-          </StackPanel>
-        </Grid>
-        <TextBlock Text="Mixer" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-      </StackPanel>
-
-      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
-        <TextBlock Text="OUTPUT" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <ComboBox x:Name="OutputCombo" Width="240" ItemsSource="{Binding OutputChoices}" SelectedValuePath="Id"
-                  SelectedValue="{Binding SelectedOutputId, Mode=OneWay}" SelectionChanged="OutputCombo_SelectionChanged"
-                  shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                  ToolTip="Windows default playback device"/>
-      </StackPanel>
-
-      <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
-        <TextBlock Text="INPUT" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <ComboBox x:Name="InputCombo" Width="220" ItemsSource="{Binding InputDevices}" SelectedValuePath="Id"
-                  SelectedValue="{Binding SelectedInputId, Mode=OneWay}" SelectionChanged="InputCombo_SelectionChanged"
-                  shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                  ToolTip="Windows default microphone"/>
-        <controls:LevelMeter Width="64" Height="8" Margin="10,0,8,0" VerticalAlignment="Center" Orientation="Horizontal" Value="{Binding MicPeak}"/>
-        <Button Style="{StaticResource MicButton}" Content="{Binding MicMuteLabel}" Command="{Binding ToggleMicCommand}"
-                shell:WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Mute the microphone"/>
-      </StackPanel>
-
-      <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
-        <Button Style="{StaticResource ChromeButton}" Content="⚙" ToolTip="Settings" Click="Settings_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-        <Button Style="{StaticResource ChromeButton}" Content="—" ToolTip="Minimize to tray" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-        <Button Style="{StaticResource ChromeButton}" Content="▢" ToolTip="Maximize" Click="Maximize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-        <Button Style="{StaticResource CloseButton}" Content="✕" ToolTip="Close to tray" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-      </StackPanel>
-    </Grid>
-
-    <Border Grid.Row="1" Margin="16,0,16,8" Padding="12,8" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="12">
-      <Grid>
+    <!-- Header -->
+    <Border Grid.Row="0" Height="56" BorderBrush="{StaticResource InkBrush}" BorderThickness="0,0,0,2">
+      <Grid Margin="24,0,8,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
-          <Ellipse.Style>
-            <Style TargetType="Ellipse">
-              <Setter Property="Fill" Value="#5C6573"/>
-              <Style.Triggers>
-                <DataTrigger Binding="{Binding ChatMixConnected}" Value="True">
-                  <Setter Property="Fill" Value="#B6F23A"/>
-                </DataTrigger>
-              </Style.Triggers>
-            </Style>
-          </Ellipse.Style>
-        </Ellipse>
-        <TextBlock Grid.Column="1" Text="CHATMIX" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-        <CheckBox Grid.Column="2" Content="On" IsChecked="{Binding ChatMixEnabled}" Margin="0,0,14,0" VerticalAlignment="Center" ToolTip="Listen for Nova Pro ChatMix reports (07 45). The slider below works while this is off."/>
-        <TextBlock Grid.Column="3" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{StaticResource MutedBrush}" FontSize="12">
-          <Run Text="{Binding ChatMixReadout, Mode=OneWay}" FontWeight="SemiBold" Foreground="#F2F4F6"/>
-          <Run Text="   "/>
-          <Run Text="{Binding ChatMixDetail, Mode=OneWay}"/>
-        </TextBlock>
+
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="MIXER" FontFamily="{StaticResource DisplayFont}" FontStretch="Condensed" FontWeight="Bold" FontSize="34" VerticalAlignment="Center"/>
+          <TextBlock Text="MX-5 · FIVE-CHANNEL VIRTUAL CONSOLE" Style="{StaticResource Legend}" VerticalAlignment="Center" Margin="14,6,0,0"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
+          <Border Style="{StaticResource PortTag}">
+            <TextBlock Text="OUT" FontSize="10" Foreground="{StaticResource PaperBrush}" VerticalAlignment="Center"/>
+          </Border>
+          <ComboBox x:Name="OutputCombo" Width="230" Height="30" ItemsSource="{Binding OutputChoices}" SelectedValuePath="Id"
+                    SelectedValue="{Binding SelectedOutputId, Mode=OneWay}" SelectionChanged="OutputCombo_SelectionChanged"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                    ToolTip="Where the finished mix plays"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0">
+          <Border Style="{StaticResource PortTag}">
+            <TextBlock Text="IN" FontSize="10" Foreground="{StaticResource PaperBrush}" VerticalAlignment="Center"/>
+          </Border>
+          <ComboBox x:Name="InputCombo" Width="200" Height="30" ItemsSource="{Binding InputDevices}" SelectedValuePath="Id"
+                    SelectedValue="{Binding SelectedInputId, Mode=OneWay}" SelectionChanged="InputCombo_SelectionChanged"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                    ToolTip="Windows default microphone"/>
+          <controls:LevelMeter Width="58" Height="8" Margin="10,0,10,0" VerticalAlignment="Center" Orientation="Horizontal" Value="{Binding MicPeak}"/>
+          <Button Style="{StaticResource MicButton}" Height="30" Content="{Binding MicMuteLabel}" Command="{Binding ToggleMicCommand}"
+                  shell:WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Mute the microphone"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+          <Button Style="{StaticResource GhostButton}" Height="30" Content="SETUP" ToolTip="Settings" Click="Settings_Click" Margin="0,0,8,0" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+          <Button Style="{StaticResource ChromeButton}" Content="—" ToolTip="Minimize to tray" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+          <Button Style="{StaticResource ChromeButton}" Content="▢" ToolTip="Maximize" Click="Maximize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+          <Button Style="{StaticResource CloseButton}" Content="✕" ToolTip="Close to tray" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+        </StackPanel>
       </Grid>
     </Border>
 
-    <Border Grid.Row="2" Margin="16,0,16,8" Padding="12,8" Background="#2A2414" BorderBrush="#FFC56A" BorderThickness="1" CornerRadius="12"
+    <!-- Setup warning -->
+    <Border Grid.Row="1" Padding="24,10" Background="{StaticResource InkBrush}"
             Visibility="{Binding ShowSonarWarning, Converter={StaticResource BoolVis}}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding SetupWarning}" TextWrapping="Wrap" Foreground="#FFC56A" VerticalAlignment="Center"/>
-        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="Close SteelSeries" Margin="12,0,0,0"
+        <TextBlock Text="{Binding SetupWarning}" TextWrapping="Wrap" Foreground="{StaticResource PaperBrush}" VerticalAlignment="Center"/>
+        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="CLOSE STEELSERIES" Margin="16,0,0,0"
+                Foreground="{StaticResource PaperBrush}" BorderBrush="{StaticResource PaperBrush}"
                 Command="{Binding CloseSonarCommand}"/>
       </Grid>
     </Border>
 
-    <Grid Grid.Row="3">
+    <Grid Grid.Row="2">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="92"/>
+        <ColumnDefinition Width="392"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
-      <Border Margin="10,0,0,0" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16">
-        <Grid Margin="8">
+
+      <!-- A: monitor -->
+      <Border BorderBrush="{StaticResource InkBrush}" BorderThickness="0,0,2,0" Padding="24,16,24,14">
+        <Grid>
           <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <TextBlock Text="MASTER" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-          <controls:Fader Grid.Row="1" Margin="0,8" Value="{Binding MasterVolume, Mode=TwoWay}"
-                          ToolTip="Master output volume. Knob position 0 is full and 56 is silent. Drag up for louder."/>
-          <TextBlock Grid.Row="2" Text="{Binding MasterVolumeLabel, Mode=OneWay}" FontSize="18" FontWeight="SemiBold"
-                     HorizontalAlignment="Center" Foreground="{StaticResource AccentBrush}"/>
-        </Grid>
-      </Border>
-      <ScrollViewer x:Name="ColumnScroll" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="10,0,10,0" SizeChanged="ColumnScroll_SizeChanged">
-      <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="1120">
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <UniformGrid Rows="1"/>
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemContainerStyle>
-          <Style TargetType="ContentPresenter">
-            <Setter Property="Margin" Value="6,0"/>
-          </Style>
-        </ItemsControl.ItemContainerStyle>
-        <ItemsControl.ItemTemplate>
-          <DataTemplate>
-            <Border AllowDrop="True" DragOver="Channel_DragOver" DragLeave="Channel_DragLeave" Drop="Channel_Drop">
-              <Border.Style>
-                <Style TargetType="Border">
-                  <Setter Property="Background" Value="#14181F"/>
-                  <Setter Property="BorderBrush" Value="#2A3140"/>
-                  <Setter Property="BorderThickness" Value="1"/>
-                  <Setter Property="CornerRadius" Value="16"/>
-                  <Setter Property="MinWidth" Value="200"/>
-                  <Setter Property="SnapsToDevicePixels" Value="True"/>
+
+          <Grid>
+            <TextBlock Text="A — MONITOR" Style="{StaticResource LegendStrong}" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+              <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,7,0">
+                <Ellipse.Style>
+                  <Style TargetType="Ellipse">
+                    <Setter Property="Fill" Value="{StaticResource RuleBrush}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding ChatMixConnected}" Value="True">
+                        <Setter Property="Fill" Value="{StaticResource AccentBrush}"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Ellipse.Style>
+              </Ellipse>
+              <CheckBox Content="NOVA PRO DIAL" FontSize="10" Margin="0" IsChecked="{Binding ChatMixEnabled}" VerticalAlignment="Center"
+                        ToolTip="Listen for the base station dial and knob. The dials below work while this is off."/>
+            </StackPanel>
+          </Grid>
+
+          <!-- What the base station screen is showing -->
+          <Border Grid.Row="1" Margin="0,14,0,0" Height="150" Background="{StaticResource ScreenBrush}" CornerRadius="4" Padding="18,14">
+            <Grid TextElement.Foreground="{StaticResource OnInkBrush}">
+              <Grid Visibility="{Binding ScreenIsSong, Converter={StaticResource BoolVis}}">
+                <StackPanel VerticalAlignment="Top">
+                  <TextBlock Text="{Binding ScreenTitle}" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock Text="{Binding ScreenArtist}" FontSize="14" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Bottom" Visibility="{Binding ScreenHasTimeline, Converter={StaticResource BoolVis}}">
+                  <Border BorderBrush="{StaticResource OnInkBrush}" BorderThickness="1.5" Padding="2">
+                    <controls:LevelMeter Height="6" Orientation="Horizontal" Linear="True" Fill="{StaticResource OnInkBrush}" Value="{Binding ScreenProgress}"/>
+                  </Border>
+                  <Grid Margin="0,6,0,0">
+                    <TextBlock Text="{Binding ScreenElapsed}" FontSize="11"/>
+                    <TextBlock Text="{Binding ScreenTotal}" FontSize="11" HorizontalAlignment="Right"/>
+                  </Grid>
+                </StackPanel>
+              </Grid>
+              <Grid Visibility="{Binding ScreenIsSong, Converter={StaticResource BoolVis}, ConverterParameter=invert}">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Text="MASTER" FontSize="10" Foreground="#B9B4A6"/>
+                  <TextBlock Text="{Binding MasterVolumeLabel}" Style="{StaticResource Numeral}" FontSize="52" LineHeight="54" Margin="0,4,0,0" Foreground="{StaticResource OnInkBrush}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="GAME" FontSize="10" Foreground="#B9B4A6"/>
+                  <TextBlock Text="{Binding ChatMixGameLabel}" Style="{StaticResource Numeral}" FontSize="52" LineHeight="54" Margin="0,4,0,0" Foreground="{StaticResource OnInkBrush}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                  <TextBlock Text="CHAT" FontSize="10" Foreground="#B9B4A6"/>
+                  <TextBlock Text="{Binding ChatMixChatLabel}" Style="{StaticResource Numeral}" FontSize="52" LineHeight="54" Margin="0,4,0,0" Foreground="{StaticResource OnInkBrush}"/>
+                </StackPanel>
+              </Grid>
+            </Grid>
+          </Border>
+          <Grid Grid.Row="2" Margin="0,7,0,0">
+            <TextBlock Text="BASE STATION DISPLAY" Style="{StaticResource Legend}"/>
+            <TextBlock HorizontalAlignment="Right">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource Legend}">
+                  <Setter Property="Text" Value="SHOWING MIX"/>
                   <Style.Triggers>
-                    <Trigger Property="Tag" Value="over">
-                      <Setter Property="BorderBrush" Value="#B6F23A"/>
-                    </Trigger>
+                    <DataTrigger Binding="{Binding ScreenIsSong}" Value="True">
+                      <Setter Property="Text" Value="SHOWING SONG"/>
+                    </DataTrigger>
                   </Style.Triggers>
                 </Style>
-              </Border.Style>
-              <Grid Margin="12">
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/>
-                  <RowDefinition Height="Auto"/>
-                  <RowDefinition Height="*" MinHeight="160"/>
-                  <RowDefinition Height="Auto"/>
-                  <RowDefinition Height="190"/>
-                </Grid.RowDefinitions>
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <Ellipse Width="8" Height="8" Fill="{Binding Accent}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <StackPanel Grid.Column="1">
-                    <TextBlock Text="{Binding DisplayTitle}" FontSize="14" FontWeight="SemiBold"/>
-                    <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource FaintBrush}" FontSize="11"/>
-                  </StackPanel>
-                  <TextBlock Grid.Column="2" Text="{Binding AppCountLabel}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center"/>
-                </Grid>
-                <ComboBox Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding DataContext.OutputChoices, RelativeSource={RelativeSource AncestorType=Window}}"
-                          SelectedValuePath="Id" SelectedValue="{Binding DeviceId, Mode=OneWay}" SelectionChanged="ChannelDevice_SelectionChanged"
-                          ToolTip="Master mix sends this channel to the master output. Pick another device to play it somewhere else."/>
-                <Grid Grid.Row="2" Margin="0,8">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="10"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <controls:LevelMeter Value="{Binding Peak}" Margin="0,6,0,6"/>
-                  <controls:Fader Grid.Column="1" Value="{Binding Volume, Mode=TwoWay}" IsMuted="{Binding Muted}" Margin="8,0,0,0"/>
-                </Grid>
-                <Grid Grid.Row="3">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <Button Style="{StaticResource MuteButton}" Content="{Binding MuteLabel}" Command="{Binding ToggleMuteCommand}" Margin="0"/>
-                  <TextBlock Grid.Column="1" Text="{Binding VolumeLabel}" FontSize="18" FontWeight="SemiBold" Margin="12,8,0,0"
-                             VerticalAlignment="Center" Typography.NumeralAlignment="Tabular" Foreground="{StaticResource AccentBrush}"/>
-                </Grid>
-                <Grid Grid.Row="4" Margin="0,8,0,0">
-                  <TextBlock Text="Drop an app here" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                             IsHitTestVisible="False" Visibility="{Binding HasApps, Converter={StaticResource BoolVis}, ConverterParameter=invert}"/>
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding Apps}">
-                      <ItemsControl.ItemContainerStyle>
-                        <Style TargetType="ContentPresenter">
-                          <Setter Property="Margin" Value="0,0,0,8"/>
-                        </Style>
-                      </ItemsControl.ItemContainerStyle>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                          <Border Background="#1C222C" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="10" Padding="8"
-                                  PreviewMouseLeftButtonDown="Chip_PreviewMouseLeftButtonDown"
-                                  PreviewMouseMove="Chip_PreviewMouseMove"
-                                  PreviewMouseLeftButtonUp="Chip_PreviewMouseLeftButtonUp"
-                                  ToolTip="Drag onto a channel, or pick one below">
-                            <Grid>
-                              <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                              </Grid.ColumnDefinitions>
-                              <Grid Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Top">
-                                <Border Background="#0D0F12" CornerRadius="6" Visibility="{Binding HasIcon, Converter={StaticResource BoolVis}, ConverterParameter=invert}">
-                                  <TextBlock Text="{Binding Initial}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B6F23A" FontWeight="SemiBold"/>
-                                </Border>
-                                <Image Source="{Binding Icon}" Width="28" Height="28" Visibility="{Binding HasIcon, Converter={StaticResource BoolVis}}"/>
-                              </Grid>
-                              <StackPanel Grid.Column="1">
-                                <Grid>
-                                  <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                  </Grid.ColumnDefinitions>
-                                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                  <Button Grid.Column="1" Style="{StaticResource MuteButton}" Content="{Binding MuteLabel}" Command="{Binding ToggleMuteCommand}" Padding="8,2" Margin="8,0,0,0" MinWidth="52"/>
-                                </Grid>
-                                <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,2,0,6"/>
-                                <ComboBox ItemsSource="{Binding DataContext.ChannelChoices, RelativeSource={RelativeSource AncestorType=Window}}"
-                                          SelectedValuePath="Id" SelectedValue="{Binding Channel, Mode=OneWay}" SelectionChanged="ChipChannel_SelectionChanged"/>
-                                <controls:Fader Orientation="Horizontal" Height="18" Margin="0,8,0,2" Value="{Binding BaseVolume, Mode=TwoWay}" IsMuted="{Binding Muted}"/>
-                                <controls:LevelMeter Height="4" Margin="0,4,0,0" Orientation="Horizontal" Value="{Binding Peak}"/>
-                              </StackPanel>
-                            </Grid>
-                          </Border>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </ScrollViewer>
-                </Grid>
-              </Grid>
-            </Border>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
-    </ScrollViewer>
-    </Grid>
+              </TextBlock.Style>
+            </TextBlock>
+          </Grid>
 
-    <Border Grid.Row="4" Margin="16,0,16,8" Padding="14,10" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="12">
-      <Grid>
+          <!-- ChatMix dial -->
+          <!-- The block keeps its proportions and shrinks as one piece when the window is short. -->
+          <Viewbox Grid.Row="3" Margin="0,8,0,0" Stretch="Uniform" StretchDirection="DownOnly">
+            <Grid Width="340" Height="336">
+              <controls:Dial Width="310" Height="310" VerticalAlignment="Top" Centered="True" ShowValue="True" Caption="CHATMIX"
+                             Value="{Binding ChatMixBalance, Mode=TwoWay}"
+                             ToolTip="Game and Chat balance. Centre keeps both at full volume. Drag, scroll, or double-click to centre. Works with or without the base station."/>
+              <StackPanel HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                <TextBlock Text="GAME" Style="{StaticResource LegendStrong}"/>
+                <TextBlock Text="{Binding ChatMixGameLabel}" Style="{StaticResource Numeral}" FontSize="52" LineHeight="54"/>
+              </StackPanel>
+              <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                <TextBlock Text="CHAT" Style="{StaticResource LegendStrong}" HorizontalAlignment="Right"/>
+                <TextBlock Text="{Binding ChatMixChatLabel}" Style="{StaticResource Numeral}" FontSize="52" LineHeight="54" HorizontalAlignment="Right"/>
+              </StackPanel>
+            </Grid>
+          </Viewbox>
+          <TextBlock Grid.Row="4" Text="{Binding ChatMixDetail}" Style="{StaticResource Legend}" TextWrapping="Wrap" Margin="0,8,0,0" MaxHeight="28" TextTrimming="CharacterEllipsis"/>
+
+          <!-- Master -->
+          <Border Grid.Row="5" Margin="0,12,0,0" Padding="0,12,0,0" BorderBrush="{StaticResource RuleBrush}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal">
+              <controls:Dial Width="96" Height="96" Value="{Binding MasterVolume, Mode=TwoWay}"
+                             ToolTip="Master output volume. Follows the base station knob. Drag or scroll to change it."/>
+              <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="MASTER" Style="{StaticResource LegendStrong}"/>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding MasterVolumeLabel}" Style="{StaticResource Numeral}" FontSize="50" LineHeight="52"/>
+                  <TextBlock Text="%" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Bottom" Margin="6,0,0,10"/>
+                </StackPanel>
+                <TextBlock Text="{Binding KnobLabel}" Style="{StaticResource Legend}"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <TextBlock Grid.Row="6" Margin="0,10,0,0" Style="{StaticResource Legend}" Text="{Binding LastReportText, Mode=OneWay}" TextTrimming="CharacterEllipsis"/>
+        </Grid>
+      </Border>
+
+      <!-- B: channels -->
+      <Grid Grid.Column="1" Margin="0,16,0,0">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <Grid>
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="56"/>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="56"/>
-            <ColumnDefinition Width="200"/>
-          </Grid.ColumnDefinitions>
-          <TextBlock Text="GAME" FontSize="11" FontWeight="SemiBold" Foreground="#B6F23A" VerticalAlignment="Center"/>
-          <Grid Grid.Column="1" Height="28" Margin="8,0">
-            <Border Width="2" Height="12" Background="#5C6573" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
-            <Slider Style="{StaticResource BalanceSlider}" VerticalAlignment="Center"
-                    Value="{Binding ChatMixBalance, Mode=TwoWay}"
-                    shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                    ToolTip="Game and Chat balance. Center keeps both at full volume. Works with or without the base station."/>
-          </Grid>
-          <TextBlock Grid.Column="2" Text="CHAT" FontSize="11" FontWeight="SemiBold" Foreground="#7AD7FF" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-          <TextBlock Grid.Column="3" Text="{Binding ChatMixBalanceLabel, Mode=OneWay}" Margin="14,0,0,0" VerticalAlignment="Center"
-                     FontWeight="SemiBold" Foreground="#F2F4F6"/>
+        <Grid Margin="24,0,24,14">
+          <TextBlock Text="B — CHANNELS" Style="{StaticResource LegendStrong}"/>
+          <TextBlock Text="DRAG AN APP ONTO A STRIP TO ROUTE IT" Style="{StaticResource Legend}" HorizontalAlignment="Right"/>
         </Grid>
-        <TextBlock Grid.Row="1" Margin="0,6,0,0" FontFamily="Consolas" FontSize="12" Foreground="{StaticResource MutedBrush}"
-                   Text="{Binding LastReportText, Mode=OneWay}" TextTrimming="CharacterEllipsis"/>
+
+        <Grid Grid.Row="1" Margin="12,0,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <ScrollViewer x:Name="ColumnScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" SizeChanged="ColumnScroll_SizeChanged">
+            <ItemsControl x:Name="ColumnHost" ItemsSource="{Binding Channels}" MinWidth="760">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Rows="1"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border AllowDrop="True" DragOver="Channel_DragOver" DragLeave="Channel_DragLeave" Drop="Channel_Drop" Padding="12,0,12,12">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource RuleBrush}"/>
+                        <Setter Property="BorderThickness" Value="1,0,0,0"/>
+                        <Setter Property="MinWidth" Value="150"/>
+                        <Style.Triggers>
+                          <Trigger Property="Tag" Value="over">
+                            <Setter Property="Background" Value="{StaticResource ElevatedBrush}"/>
+                          </Trigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*" MinHeight="170"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="176"/>
+                      </Grid.RowDefinitions>
+
+                      <StackPanel>
+                        <Grid>
+                          <TextBlock Text="{Binding Number}" Style="{StaticResource Legend}"/>
+                          <TextBlock Text="{Binding AppCountLabel}" Style="{StaticResource Legend}" HorizontalAlignment="Right"/>
+                        </Grid>
+                        <TextBlock Text="{Binding UpperName}" FontSize="38" LineHeight="38">
+                          <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource Numeral}">
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding Muted}" Value="True">
+                                  <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding RouteLabel}" Style="{StaticResource Legend}" TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+
+                      <ComboBox Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding DataContext.OutputChoices, RelativeSource={RelativeSource AncestorType=Window}}"
+                                SelectedValuePath="Id" SelectedValue="{Binding DeviceId, Mode=OneWay}" SelectionChanged="ChannelDevice_SelectionChanged"
+                                ToolTip="Master mix sends this channel to the master output. Pick another device to play it somewhere else."/>
+
+                      <Grid Grid.Row="2" Margin="0,12,0,8">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto"/>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <controls:DbScale/>
+                        <controls:Fader Grid.Column="1" HorizontalAlignment="Center" Value="{Binding Volume, Mode=TwoWay}" IsMuted="{Binding Muted}"/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,15">
+                          <controls:LevelMeter Width="8" Value="{Binding Peak}"/>
+                          <controls:LevelMeter Width="8" Margin="4,0,0,0" Value="{Binding Peak}"/>
+                        </StackPanel>
+                      </Grid>
+
+                      <Grid Grid.Row="3">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding DbLabel}" FontSize="40" LineHeight="40">
+                            <TextBlock.Style>
+                              <Style TargetType="TextBlock" BasedOn="{StaticResource Numeral}">
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding Muted}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </TextBlock.Style>
+                          </TextBlock>
+                          <TextBlock Text="dB" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Bottom" Margin="5,0,0,6"/>
+                        </StackPanel>
+                        <TextBlock FontSize="11" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,6">
+                          <Run Text="{Binding VolumeLabel, Mode=OneWay}"/><Run Text="%"/>
+                        </TextBlock>
+                      </Grid>
+
+                      <Button Grid.Row="4" Style="{StaticResource MuteButton}" Height="36" Content="{Binding MuteLabel}" Command="{Binding ToggleMuteCommand}" Margin="0,8,0,0"/>
+
+                      <Grid Grid.Row="5" Margin="0,12,0,0">
+                        <Grid Visibility="{Binding HasApps, Converter={StaticResource BoolVis}, ConverterParameter=invert}" IsHitTestVisible="False" VerticalAlignment="Top">
+                          <Rectangle Stroke="{StaticResource MutedBrush}" StrokeThickness="1" StrokeDashArray="3 3" RadiusX="2" RadiusY="2"/>
+                          <TextBlock Text="drop an app here" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="8,6" HorizontalAlignment="Center"/>
+                        </Grid>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                          <ItemsControl ItemsSource="{Binding Apps}">
+                            <ItemsControl.ItemContainerStyle>
+                              <Style TargetType="ContentPresenter">
+                                <Setter Property="Margin" Value="0,0,0,6"/>
+                              </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate>
+                                <Border Background="{StaticResource BgBrush}" BorderBrush="{StaticResource InkBrush}" BorderThickness="1" CornerRadius="2" Padding="7,6"
+                                        PreviewMouseLeftButtonDown="Chip_PreviewMouseLeftButtonDown"
+                                        PreviewMouseMove="Chip_PreviewMouseMove"
+                                        PreviewMouseLeftButtonUp="Chip_PreviewMouseLeftButtonUp"
+                                        ToolTip="{Binding Subtitle}">
+                                  <StackPanel>
+                                    <Grid>
+                                      <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                      </Grid.ColumnDefinitions>
+                                      <Grid Width="18" Height="18" Margin="0,0,7,0" VerticalAlignment="Center">
+                                        <Border Background="{StaticResource InkBrush}" Visibility="{Binding HasIcon, Converter={StaticResource BoolVis}, ConverterParameter=invert}">
+                                          <TextBlock Text="{Binding Initial}" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource PaperBrush}" FontWeight="Bold"/>
+                                        </Border>
+                                        <Image Source="{Binding Icon}" Width="18" Height="18" Visibility="{Binding HasIcon, Converter={StaticResource BoolVis}}"/>
+                                      </Grid>
+                                      <TextBlock Grid.Column="1" Text="{Binding DisplayName}" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                    </Grid>
+                                    <ComboBox Margin="0,6,0,0" ItemsSource="{Binding DataContext.ChannelChoices, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              SelectedValuePath="Id" SelectedValue="{Binding Channel, Mode=OneWay}" SelectionChanged="ChipChannel_SelectionChanged"/>
+                                    <Grid Margin="0,6,0,0">
+                                      <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                      </Grid.ColumnDefinitions>
+                                      <StackPanel VerticalAlignment="Center">
+                                        <controls:Fader Orientation="Horizontal" Height="18" Value="{Binding BaseVolume, Mode=TwoWay}" IsMuted="{Binding Muted}"/>
+                                        <controls:LevelMeter Height="4" Margin="2,2,2,0" Orientation="Horizontal" Value="{Binding Peak}"/>
+                                      </StackPanel>
+                                      <Button Grid.Column="1" Style="{StaticResource MuteButton}" Content="{Binding MuteLabel}" Command="{Binding ToggleMuteCommand}" FontSize="10" Padding="6,4" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </Grid>
+                                  </StackPanel>
+                                </Border>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </ScrollViewer>
+                      </Grid>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+
+          <!-- Output strip: the finished mix -->
+          <Border Grid.Column="1" Width="156" BorderBrush="{StaticResource InkBrush}" BorderThickness="2,0,0,0" Padding="12,0,20,12">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="170"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="176"/>
+              </Grid.RowDefinitions>
+              <StackPanel>
+                <TextBlock Text="Σ" Style="{StaticResource Legend}"/>
+                <TextBlock Text="OUT" Style="{StaticResource Numeral}" FontSize="38" LineHeight="38"/>
+                <TextBlock Text="{Binding OutputName}" Style="{StaticResource Legend}" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <Border Grid.Row="1" Margin="0,10,0,0" Height="30">
+                <TextBlock Text="FINAL MIX" Style="{StaticResource Legend}" VerticalAlignment="Center"/>
+              </Border>
+              <Grid Grid.Row="2" Margin="0,12,0,8">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <controls:DbScale/>
+                <controls:LevelMeter Grid.Column="1" Width="16" Margin="8,15,0,15" Value="{Binding OutLeft}" ToolTip="Left"/>
+                <controls:LevelMeter Grid.Column="2" Width="16" Margin="5,15,0,15" Value="{Binding OutRight}" ToolTip="Right"/>
+                <controls:LevelMeter Grid.Column="3" Width="8" Margin="0,15,0,15" HorizontalAlignment="Right" Reversed="True" Linear="True"
+                                     Fill="{StaticResource AccentBrush}" Value="{Binding LimiterReduction}"/>
+              </Grid>
+              <StackPanel Grid.Row="3" Orientation="Horizontal">
+                <TextBlock Text="{Binding OutPeakLabel}" Style="{StaticResource Numeral}" FontSize="40" LineHeight="40"/>
+                <TextBlock Text="dBFS" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Bottom" Margin="5,0,0,6"/>
+              </StackPanel>
+              <ToggleButton Grid.Row="4" Height="36" Margin="0,8,0,0" IsChecked="{Binding LimiterEnabled}" Cursor="Hand"
+                            ToolTip="Turns the mix down for a moment when the channels add up past full scale. Quieter audio is left untouched.">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Bd" Background="Transparent" BorderBrush="{StaticResource InkBrush}" BorderThickness="1" CornerRadius="2">
+                      <TextBlock x:Name="Tx" Text="LIMITER OFF" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsChecked" Value="True">
+                        <Setter TargetName="Bd" Property="Background" Value="{StaticResource InkBrush}"/>
+                        <Setter TargetName="Tx" Property="Foreground" Value="{StaticResource PaperBrush}"/>
+                        <Setter TargetName="Tx" Property="Text" Value="LIMITER ON"/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <StackPanel Grid.Row="5" Margin="0,12,0,0">
+                <TextBlock Text="L · R  OUTPUT PEAK" Style="{StaticResource Legend}"/>
+                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                  <Rectangle Width="7" Height="7" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <TextBlock Text="GAIN REDUCTION" Style="{StaticResource Legend}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding LimiterLabel}" Style="{StaticResource LegendStrong}" Margin="0,10,0,0"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+        </Grid>
+      </Grid>
+    </Grid>
+
+    <!-- Status line -->
+    <Border Grid.Row="3" BorderBrush="{StaticResource InkBrush}" BorderThickness="0,2,0,0" Padding="24,9">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Ellipse Width="7" Height="7" VerticalAlignment="Center">
+          <Ellipse.Style>
+            <Style TargetType="Ellipse">
+              <Setter Property="Fill" Value="{StaticResource RuleBrush}"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding RoutingAvailable}" Value="True">
+                  <Setter Property="Fill" Value="{StaticResource AccentBrush}"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Ellipse.Style>
+        </Ellipse>
+        <TextBlock Grid.Column="1" Text="{Binding Status}" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,16,0"/>
+        <TextBlock Grid.Column="2" Text="SAVED IN %APPDATA%\MIXER" Style="{StaticResource Legend}" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
       </Grid>
     </Border>
 
-    <Grid Grid.Row="5" Margin="20,6,20,10">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,8,0">
-        <Ellipse.Style>
-          <Style TargetType="Ellipse">
-            <Setter Property="Fill" Value="#5C6573"/>
-            <Style.Triggers>
-              <DataTrigger Binding="{Binding RoutingAvailable}" Value="True">
-                <Setter Property="Fill" Value="#B6F23A"/>
-              </DataTrigger>
-            </Style.Triggers>
-          </Style>
-        </Ellipse.Style>
-      </Ellipse>
-      <TextBlock Grid.Column="1" Text="{Binding Status}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0,12,0"/>
-      <TextBlock Grid.Column="2" Text="Saved in %APPDATA%\Mixer" Foreground="{StaticResource FaintBrush}" FontSize="12" VerticalAlignment="Center" ToolTip="{Binding ConfigPath}"/>
-    </Grid>
-
-    <Border Grid.RowSpan="6" Background="#C00D0F12" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
-      <Border HorizontalAlignment="Right" Width="400" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1,0,0,0" MouseLeftButtonDown="EatClick">
+    <!-- Settings -->
+    <Border Grid.RowSpan="4" Background="#991B1A17" Visibility="{Binding SettingsOpen, Converter={StaticResource BoolVis}}" MouseLeftButtonDown="SettingsBackdrop_MouseDown">
+      <Border HorizontalAlignment="Right" Width="420" Background="{StaticResource BgBrush}" BorderBrush="{StaticResource InkBrush}" BorderThickness="2,0,0,0" MouseLeftButtonDown="EatClick">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
-          <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-          <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource FaintBrush}" Margin="0,4,0,16"/>
+          <TextBlock Text="SETUP" Style="{StaticResource Numeral}" FontSize="38" LineHeight="38"/>
+          <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,16"/>
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
           <CheckBox Content="Close to tray" IsChecked="{Binding CloseToTray}"
@@ -341,41 +530,42 @@
                     ToolTip="When nothing has been adjusted for 5 seconds, the Nova Pro screen shows the song Spotify is playing. Turning a dial or moving a fader brings the mix back."/>
           <TextBlock Text="Latency" Margin="0,14,0,4"/>
           <ComboBox Width="120" HorizontalAlignment="Left" ItemsSource="{Binding LatencyChoices}" SelectedItem="{Binding MixLatencyMs}"/>
-          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,0"
                      Text="Shared-mode period for the cable captures and the master render, in milliseconds."/>
           <CheckBox Content="Limiter" IsChecked="{Binding LimiterEnabled}" Margin="0,12,0,0"
                     ToolTip="Turns the mix down for a moment when the channels add up past full scale. Quieter audio is left untouched. Adds 2 ms. Off sends the sum to the device as is."/>
           <CheckBox Content="Debug: pass Game straight through" IsChecked="{Binding GameStraightThrough}" Margin="0,12,0,0"
                     ToolTip="Send only the Game cable to the master output, with no other channels mixed in."/>
-          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,0"
                      Text="The base station knob is attenuation: position 0 is full master volume and 56 is silent. A higher position than 56 extends the scale. ChatMix reports move Game and Chat as they arrive."/>
-          <TextBlock Text="Virtual cables" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,4"/>
-          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12"
+          <TextBlock Text="VIRTUAL CABLES" Style="{StaticResource LegendStrong}" FontSize="12" Margin="0,22,0,6"/>
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11"
                      Text="Install Virtual Audio Cable, open its control panel, and set the cable count to 4. Apps play into each line. Mixer records that line and sends the mix to the master output."/>
           <Button Style="{StaticResource GhostButton}" Content="Download Virtual Audio Cable" Command="{Binding OpenVacDownloadCommand}" HorizontalAlignment="Left" Margin="0,8,0,8"/>
-          <TextBlock Text="Game" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,6,0,2"/>
+          <TextBlock Text="GAME" Style="{StaticResource Legend}" Margin="0,6,0,2"/>
           <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding GameCableId, Mode=OneWay}" Tag="game" SelectionChanged="Cable_SelectionChanged"/>
-          <TextBlock Text="Chat" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <TextBlock Text="CHAT" Style="{StaticResource Legend}" Margin="0,8,0,2"/>
           <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding ChatCableId, Mode=OneWay}" Tag="chat" SelectionChanged="Cable_SelectionChanged"/>
-          <TextBlock Text="Media" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <TextBlock Text="MEDIA" Style="{StaticResource Legend}" Margin="0,8,0,2"/>
           <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding MediaCableId, Mode=OneWay}" Tag="media" SelectionChanged="Cable_SelectionChanged"/>
-          <TextBlock Text="Aux" Foreground="{StaticResource FaintBrush}" FontSize="11" Margin="0,8,0,2"/>
+          <TextBlock Text="AUX" Style="{StaticResource Legend}" Margin="0,8,0,2"/>
           <ComboBox ItemsSource="{Binding VacCables}" SelectedValuePath="Id" SelectedValue="{Binding AuxCableId, Mode=OneWay}" Tag="aux" SelectionChanged="Cable_SelectionChanged"/>
           <Button Style="{StaticResource GhostButton}" Content="Rename to Mixer - Game, Chat, Media, Aux" Command="{Binding RenameCablesCommand}" HorizontalAlignment="Left" Margin="0,12,0,0"/>
           <Button Style="{StaticResource GhostButton}" Content="Open config folder" Command="{Binding OpenConfigCommand}" HorizontalAlignment="Left" Margin="0,16,0,0"/>
-          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,18,0,0"
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,18,0,0"
                      Text="Default on a channel follows the master output. Pick a device on the channel to send every app in it there. New audio follows the channel; a stream that is already playing may stay put until the app opens another one."/>
-          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,10,0,0"
+          <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,10,0,0"
                      Text="Discord, TeamSpeak, Spotify, Chrome, Firefox, Edge, and VLC land in Chat or Media the first time they play. Drag a chip, or use its menu, to move it. The choice is remembered by the program name."/>
-          <Button Style="{StaticResource GhostButton}" Content="Close" HorizontalAlignment="Left" Margin="0,20,0,0" Click="Settings_Click"/>
+          <Button Style="{StaticResource GhostButton}" Content="CLOSE" HorizontalAlignment="Left" Margin="0,20,0,0" Click="Settings_Click"/>
         </StackPanel>
         </ScrollViewer>
       </Border>
     </Border>
 
-    <Border Grid.Row="3" Margin="16" Background="#E614181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="16" Padding="24"
+    <Border Grid.Row="2" Margin="40" Background="{StaticResource BgBrush}" BorderBrush="{StaticResource InkBrush}" BorderThickness="2" Padding="24"
+            HorizontalAlignment="Center" VerticalAlignment="Center"
             Visibility="{Binding NoOutputs, Converter={StaticResource BoolVis}}" IsHitTestVisible="False">
-      <TextBlock Text="No playback devices found. Plug in your IEMs and Mixer will list them here." FontSize="16" TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center"/>
+      <TextBlock Text="No playback devices found. Plug in your IEMs and Mixer will list them here." FontSize="14" TextWrapping="Wrap" TextAlignment="Center"/>
     </Border>
   </Grid>
 </Window>

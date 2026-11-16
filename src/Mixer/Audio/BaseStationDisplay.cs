@@ -30,6 +30,7 @@ public sealed class BaseStationDisplay : IDisposable
     private object? _shown;
     private byte[][]? _shownPackets;
     private readonly SongScreen _songScreen = new();
+    private ScreenSong? _onScreen;
     private SpotifySong.Track? _song;
     private long _songRead = -SongPollMs;
     private long _sentAt;
@@ -69,6 +70,9 @@ public sealed class BaseStationDisplay : IDisposable
             _wake.Set();
         }
     }
+
+    /// <summary>The song the base station screen is showing right now, or null while it shows the mix.</summary>
+    public ScreenSong? SongOnScreen => Volatile.Read(ref _onScreen);
 
     public void Start() => _thread.Start();
 
@@ -131,6 +135,9 @@ public sealed class BaseStationDisplay : IDisposable
                 _chat.WaitOled(generation, 200);
                 _shown = wanted;
                 _shownPackets = packets;
+                Volatile.Write(ref _onScreen, wanted is SongScreen.Frame && song is { } showing
+                    ? new ScreenSong(showing.Title, showing.Artist, showing.Position, showing.Duration, showing.UpdatedAt)
+                    : null);
                 _sentAt = now;
                 _released = false;
             }
@@ -203,6 +210,7 @@ public sealed class BaseStationDisplay : IDisposable
         _released = true;
         _shown = null;
         _shownPackets = null;
+        Volatile.Write(ref _onScreen, null);
     }
 
     private OledScreen.Picture Read()
@@ -224,4 +232,17 @@ public sealed class BaseStationDisplay : IDisposable
 
     private static int Percent(float volume) =>
         (int)Math.Round(Math.Clamp(volume, 0f, 1f) * 100f, MidpointRounding.AwayFromZero);
+}
+
+/// <summary>Position is what Spotify reported at UpdatedAt. Duration is zero when the length is unknown.</summary>
+public sealed record ScreenSong(string Title, string Artist, TimeSpan Position, TimeSpan Duration, DateTimeOffset UpdatedAt)
+{
+    public bool HasTimeline => Duration > TimeSpan.Zero;
+
+    public TimeSpan PositionAt(DateTimeOffset now)
+    {
+        var position = Position + (now - UpdatedAt);
+        if (position < TimeSpan.Zero) return TimeSpan.Zero;
+        return position > Duration ? Duration : position;
+    }
 }

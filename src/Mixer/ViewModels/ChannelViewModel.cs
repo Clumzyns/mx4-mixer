@@ -51,12 +51,29 @@ public sealed class ChannelViewModel : ObservableObject
             _volume = value;
             Raise();
             Raise(nameof(VolumeLabel));
+            Raise(nameof(DbLabel));
             if (!Syncing)
                 _engine.SetChannelVolume(Id, (float)(value / 100.0));
         }
     }
 
     public string VolumeLabel => $"{Math.Round(_volume):0}";
+
+    public string Number => ((int)Id + 1).ToString("00");
+    public string UpperName => Name.ToUpperInvariant();
+    /// <summary>The cable this channel records, or what the channel is for when it has none.</summary>
+    public string RouteLabel => (string.IsNullOrEmpty(_cableLabel) ? Subtitle : _cableLabel).ToUpperInvariant();
+
+    /// <summary>Fader gain in dB. The fader covers 60 dB and its bottom stop is silence.</summary>
+    public string DbLabel
+    {
+        get
+        {
+            if (_volume <= 0.05) return "-∞";
+            var db = (_volume / 100.0 - 1.0) * 60.0;
+            return db > -0.05 ? "0.0" : "-" + Math.Abs(db).ToString("0.0");
+        }
+    }
 
     public bool Muted
     {
@@ -70,7 +87,7 @@ public sealed class ChannelViewModel : ObservableObject
         }
     }
 
-    public string MuteLabel => _muted ? "Muted" : "Mute";
+    public string MuteLabel => _muted ? "MUTED" : "MUTE";
 
     public string DeviceId
     {
@@ -83,6 +100,9 @@ public sealed class ChannelViewModel : ObservableObject
         get => _peak;
         set => Set(ref _peak, value);
     }
+
+    /// <summary>Tells the device picker its selection again after its list was refilled.</summary>
+    public void ReselectDevice() => Raise(nameof(DeviceId));
 
     public void SetDeviceFromUi(string id)
     {
@@ -104,6 +124,7 @@ public sealed class ChannelViewModel : ObservableObject
             {
                 _cableLabel = snap.CableLabel;
                 Raise(nameof(DisplayTitle));
+                Raise(nameof(RouteLabel));
             }
         }
         finally

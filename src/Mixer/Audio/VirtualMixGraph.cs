@@ -32,6 +32,9 @@ internal sealed class VirtualMixGraph : IDisposable
     private float _peakBefore;
     private float _peakAfter;
     private float _lowestGain = 1f;
+    private float _meterLeft;
+    private float _meterRight;
+    private float _meterGain = 1f;
     private long _lastDriftLog;
     private bool _disposed;
 
@@ -142,6 +145,13 @@ internal sealed class VirtualMixGraph : IDisposable
             Log.Info($"Mix clock {channel} underrun={underrun} insert={insert} overrun={overrun} buffered={buffered} peak={tap.Peak:0.000} discontinuity={disc} silent={silent} captureFail={fail}");
         }
     }
+
+    /// <summary>
+    /// Output peaks and the lowest limiter gain since the last call, for the window's output meters.
+    /// </summary>
+    public (float Left, float Right, float Gain, bool Limiting) TakeOutputMeter() =>
+        (Interlocked.Exchange(ref _meterLeft, 0f), Interlocked.Exchange(ref _meterRight, 0f),
+         Interlocked.Exchange(ref _meterGain, 1f), _limiter != null);
 
     public void CopyPeaks(Span<float> peaks)
     {
@@ -366,23 +376,31 @@ internal sealed class VirtualMixGraph : IDisposable
             if (peak > 1f) clips++;
         }
 
-        var after = before;
+        var blockGain = 1f;
         if (limit && _limiter != null)
         {
             var reduced = 0;
-            var lowest = _limiter.Process(_mixLeft, _mixRight, frames, ref reduced);
+            blockGain = _limiter.Process(_mixLeft, _mixRight, frames, ref reduced);
             if (reduced > 0)
             {
                 Interlocked.Add(ref _limitedFrames, reduced);
-                if (lowest < Volatile.Read(ref _lowestGain)) Volatile.Write(ref _lowestGain, lowest);
-            }
-            after = 0f;
-            for (var i = 0; i < frames; i++)
-            {
-                var peak = Math.Max(Math.Abs(_mixLeft[i]), Math.Abs(_mixRight[i]));
-                if (peak > after) after = peak;
+                if (blockGain < Volatile.Read(ref _lowestGain)) Volatile.Write(ref _lowestGain, blockGain);
             }
         }
+
+        var afterLeft = 0f;
+        var afterRight = 0f;
+        for (var i = 0; i < frames; i++)
+        {
+            var left = Math.Abs(_mixLeft[i]);
+            var right = Math.Abs(_mixRight[i]);
+            if (left > afterLeft) afterLeft = left;
+            if (right > afterRight) afterRight = right;
+        }
+        var after = Math.Max(afterLeft, afterRight);
+        if (afterLeft > Volatile.Read(ref _meterLeft)) Volatile.Write(ref _meterLeft, afterLeft);
+        if (afterRight > Volatile.Read(ref _meterRight)) Volatile.Write(ref _meterRight, afterRight);
+        if (blockGain < Volatile.Read(ref _meterGain)) Volatile.Write(ref _meterGain, blockGain);
 
         if (dest != null)
         {

@@ -49,5 +49,11 @@ public sealed class PeakUpdate
 {
     public float MicPeak { get; init; }
     public float[] ChannelPeaks { get; init; } = new float[5];
+    /// <summary>Peak of the final mix, left and right, after the limiter.</summary>
+    public float OutLeft { get; init; }
+    public float OutRight { get; init; }
+    /// <summary>How far the limiter is turning the mix down, in dB. Zero when idle.</summary>
+    public float LimiterReductionDb { get; init; }
+    public bool LimiterOn { get; init; }
     public Dictionary<string, float> AppPeaks { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }

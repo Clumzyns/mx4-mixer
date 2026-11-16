@@ -85,7 +85,7 @@ public sealed class AppChipViewModel : ObservableObject
         }
     }
 
-    public string MuteLabel => _muted ? "Muted" : "Mute";
+    public string MuteLabel => _muted ? "MUTED" : "MUTE";
 
     public ChannelId Channel
     {

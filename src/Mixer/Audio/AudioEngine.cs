@@ -40,6 +40,9 @@ public sealed class AudioEngine : IDisposable
     private string? _masterInputId;
     private bool _micMuted;
     private float _micShown;
+    private float _outLeftShown;
+    private float _outRightShown;
+    private float _reductionShown;
     private string _status = "Starting audio engine…";
     private bool _settingOutput;
     private bool _settingInput;
@@ -829,9 +832,20 @@ public sealed class AudioEngine : IDisposable
                 _channelShown[i] = 0;
         }
 
+        var (outLeft, outRight, gain, limiting) = _mix?.TakeOutputMeter() ?? (0f, 0f, 1f, false);
+        _outLeftShown = Decay(_outLeftShown, outLeft);
+        _outRightShown = Decay(_outRightShown, outRight);
+        var reduction = gain < 1f ? (float)(-20.0 * Math.Log10(Math.Max(gain, 0.0001f))) : 0f;
+        _reductionShown = Math.Max(reduction, _reductionShown * 0.84f);
+        if (_reductionShown < 0.05f) _reductionShown = 0f;
+
         _pendingPeaks = new PeakUpdate
         {
             MicPeak = _micShown,
+            OutLeft = _outLeftShown,
+            OutRight = _outRightShown,
+            LimiterReductionDb = _reductionShown,
+            LimiterOn = limiting,
             ChannelPeaks = (float[])_channelShown.Clone(),
             AppPeaks = new Dictionary<string, float>(_appShown, StringComparer.OrdinalIgnoreCase)
         };

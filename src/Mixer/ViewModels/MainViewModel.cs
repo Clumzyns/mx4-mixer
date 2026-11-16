@@ -66,8 +66,8 @@ public sealed class MainViewModel : ObservableObject
         _mixLatencyMs = config.MixLatencyMs is 10 or 40 ? config.MixLatencyMs : 20;
         _gameStraightThrough = config.GameStraightThrough;
         _limiterEnabled = config.LimiterEnabled;
-        _chatMixGame = ChatMixMath.Percent(config.Channel(ChannelId.Game).Volume);
-        _chatMixChat = ChatMixMath.Percent(config.Channel(ChannelId.Chat).Volume);
+        // The readout is the dial, not the channel faders. Until the base station reports, show the saved balance.
+        (_chatMixGame, _chatMixChat) = ChatMixMath.ToLevels(config.ChatMixBalance);
         Channels = new ObservableCollection<ChannelViewModel>(
             ChannelIds.All.Select(id => new ChannelViewModel(id, engine)));
         ChannelChoices = new ObservableCollection<ChannelChoice>(
@@ -84,6 +84,7 @@ public sealed class MainViewModel : ObservableObject
 
     public void ConsumePeaks()
     {
+        RefreshScreenMirror();
         if (!_engine.TryConsumePeaks(out var peaks)) return;
         ApplyPeaks(peaks);
     }
@@ -136,7 +137,7 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public string MicMuteLabel => _micMuted ? "Muted" : "Live";
+    public string MicMuteLabel => _micMuted ? "MIC MUTED" : "MIC LIVE";
     public double MicPeak { get => _micPeak; private set => Set(ref _micPeak, value); }
     public string Status { get => _status; private set => Set(ref _status, value); }
     public bool RoutingAvailable { get => _routingAvailable; private set => Set(ref _routingAvailable, value); }
@@ -303,9 +304,118 @@ public sealed class MainViewModel : ObservableObject
             _masterVolume = percent;
             Raise(nameof(MasterVolume));
             Raise(nameof(MasterVolumeLabel));
+            Raise(nameof(KnobLabel));
             if (IsSyncing || _masterSync > 0) return;
             _engine.SetMasterVolume(percent / 100f);
         }
+    }
+
+    public string ChatMixGameLabel => ChatMixMath.ToLevels((int)Math.Round(_chatMixBalance)).Game.ToString();
+    public string ChatMixChatLabel => ChatMixMath.ToLevels((int)Math.Round(_chatMixBalance)).Chat.ToString();
+
+    /// <summary>Where the base station knob sits for the current master volume.</summary>
+    public string KnobLabel
+    {
+        get
+        {
+            var max = Math.Max(1, _config.VolumeKnobMax);
+            var loud = InvertVolumeKnob ? 1 - _masterVolume / 100.0 : _masterVolume / 100.0;
+            return $"KNOB {(int)Math.Round((1 - loud) * max)} / {max}";
+        }
+    }
+
+    private double _outLeft;
+    private double _outRight;
+    private double _limiterReduction;
+    private double _outHold;
+    private long _outHoldAt;
+    private string _outPeakLabel = "-∞";
+    private string _limiterLabel = "LIMITER";
+    private bool _limiterWorking;
+
+    public double OutLeft { get => _outLeft; private set => Set(ref _outLeft, value); }
+    public double OutRight { get => _outRight; private set => Set(ref _outRight, value); }
+    /// <summary>Limiter gain reduction as a share of 12 dB, for the reduction meter.</summary>
+    public double LimiterReduction { get => _limiterReduction; private set => Set(ref _limiterReduction, value); }
+    /// <summary>Highest output peak over the last second, in dBFS.</summary>
+    public string OutPeakLabel { get => _outPeakLabel; private set => Set(ref _outPeakLabel, value); }
+    public string LimiterLabel { get => _limiterLabel; private set => Set(ref _limiterLabel, value); }
+    public bool LimiterWorking { get => _limiterWorking; private set => Set(ref _limiterWorking, value); }
+
+    public string OutputName
+    {
+        get
+        {
+            var id = _selectedOutputId;
+            var match = OutputChoices.FirstOrDefault(option => option.Id == id && option.Id.Length > 0);
+            return (match?.Name ?? "No output").ToUpperInvariant();
+        }
+    }
+
+    private void ApplyOutputMeter(PeakUpdate peaks)
+    {
+        if (Math.Abs(_outLeft - peaks.OutLeft) >= 0.004) OutLeft = peaks.OutLeft;
+        if (Math.Abs(_outRight - peaks.OutRight) >= 0.004) OutRight = peaks.OutRight;
+        var share = Math.Clamp(peaks.LimiterReductionDb / 12.0, 0, 1);
+        if (Math.Abs(_limiterReduction - share) >= 0.004) LimiterReduction = share;
+        LimiterWorking = peaks.LimiterReductionDb > 0.05f;
+        LimiterLabel = !LimiterEnabled ? "LIMITER OFF"
+            : peaks.LimiterReductionDb > 0.05f ? $"LIMITER −{peaks.LimiterReductionDb:0.0} dB"
+            : "LIMITER IDLE";
+
+        var now = Environment.TickCount64;
+        var peak = Math.Max(peaks.OutLeft, peaks.OutRight);
+        if (peak >= _outHold || now - _outHoldAt > 1000)
+        {
+            _outHold = peak;
+            _outHoldAt = now;
+            OutPeakLabel = peak <= 0.001 ? "-∞" : (20 * Math.Log10(peak)).ToString("+0.0;-0.0;0.0");
+        }
+    }
+
+    private bool _screenIsSong;
+    private string _screenTitle = "";
+    private string _screenArtist = "";
+    private double _screenProgress;
+    private string _screenElapsed = "";
+    private string _screenTotal = "";
+    private bool _screenHasTimeline;
+    private long _screenReadAt;
+
+    /// <summary>True while the base station screen shows the playing song, false while it shows the mix.</summary>
+    public bool ScreenIsSong { get => _screenIsSong; private set => Set(ref _screenIsSong, value); }
+    public string ScreenTitle { get => _screenTitle; private set => Set(ref _screenTitle, value); }
+    public string ScreenArtist { get => _screenArtist; private set => Set(ref _screenArtist, value); }
+    public double ScreenProgress { get => _screenProgress; private set => Set(ref _screenProgress, value); }
+    public string ScreenElapsed { get => _screenElapsed; private set => Set(ref _screenElapsed, value); }
+    public string ScreenTotal { get => _screenTotal; private set => Set(ref _screenTotal, value); }
+    public bool ScreenHasTimeline { get => _screenHasTimeline; private set => Set(ref _screenHasTimeline, value); }
+
+    /// <summary>Copies what the base station screen shows into the mirror in the window, a few times a second.</summary>
+    private void RefreshScreenMirror()
+    {
+        var now = Environment.TickCount64;
+        if (now - _screenReadAt < 250) return;
+        _screenReadAt = now;
+        var song = _display.Enabled ? _display.SongOnScreen : null;
+        ScreenIsSong = song != null;
+        if (song == null) return;
+        ScreenTitle = song.Title;
+        ScreenArtist = song.Artist;
+        ScreenHasTimeline = song.HasTimeline;
+        if (!song.HasTimeline) return;
+        var position = song.PositionAt(DateTimeOffset.UtcNow);
+        ScreenProgress = position.Ticks / (double)song.Duration.Ticks;
+        ScreenElapsed = Clock(position);
+        ScreenTotal = Clock(song.Duration);
+    }
+
+    private static string Clock(TimeSpan time)
+    {
+        var seconds = Math.Max(0, (int)time.TotalSeconds);
+        return seconds >= 3600
+            ? $"{seconds / 3600}:{seconds / 60 % 60:00}:{seconds % 60:00}"
+            : $"{seconds / 60}:{seconds % 60:00}";
     }
 
     public string MasterVolumeLabel => $"{Math.Round(_masterVolume):0}";
@@ -324,6 +434,7 @@ public sealed class MainViewModel : ObservableObject
         {
             Raise(nameof(MasterVolume));
             Raise(nameof(MasterVolumeLabel));
+            Raise(nameof(KnobLabel));
         }
     }
 
@@ -337,6 +448,8 @@ public sealed class MainViewModel : ObservableObject
             if (_balanceSync == 0 && !_balanceArmed) return;
             if (!Set(ref _chatMixBalance, balance)) return;
             Raise(nameof(ChatMixBalanceLabel));
+            Raise(nameof(ChatMixGameLabel));
+            Raise(nameof(ChatMixChatLabel));
             if (_balanceSync > 0) return;
             var (game, chat) = ChatMixMath.ToLevels(balance);
             _chatMixGame = game;
@@ -381,6 +494,8 @@ public sealed class MainViewModel : ObservableObject
         {
             Raise(nameof(ChatMixBalance));
             Raise(nameof(ChatMixBalanceLabel));
+            Raise(nameof(ChatMixGameLabel));
+            Raise(nameof(ChatMixChatLabel));
         }
     }
 
@@ -488,10 +603,14 @@ public sealed class MainViewModel : ObservableObject
             channel.Syncing = true;
         try
         {
-            RebuildOutputs(snap.Outputs, snap.Channels.Select(channel => channel.DeviceId), snap.VirtualMixActive);
-            RebuildInputs(snap.Inputs);
+            var outputsRebuilt = RebuildOutputs(snap.Outputs, snap.Channels.Select(channel => channel.DeviceId), snap.VirtualMixActive);
+            var inputsRebuilt = RebuildInputs(snap.Inputs);
             SelectedOutputId = snap.MasterOutputId;
+            Raise(nameof(OutputName));
             SelectedInputId = snap.MasterInputId;
+            // Refilling a list clears the picker's selection. The id has not changed, so say it again to reselect it.
+            if (outputsRebuilt) Raise(nameof(SelectedOutputId));
+            if (inputsRebuilt) Raise(nameof(SelectedInputId));
             MasterVolume = ChatMixMath.Percent(snap.MasterVolume);
             MicMuted = snap.MicMuted;
             Status = snap.Status;
@@ -503,7 +622,7 @@ public sealed class MainViewModel : ObservableObject
             Raise(nameof(VirtualMixActive));
             Raise(nameof(NoOutputs));
 
-            Replace(VacCables, snap.Cables.Select(cable => new DeviceOption { Id = cable.Id, Name = cable.Name }).ToList());
+            var cablesRebuilt = Replace(VacCables, snap.Cables.Select(cable => new DeviceOption { Id = cable.Id, Name = cable.Name }).ToList());
             SetCableFromSnap(ChannelId.Game, snap, ref _gameCableId, nameof(GameCableId));
             SetCableFromSnap(ChannelId.Chat, snap, ref _chatCableId, nameof(ChatCableId));
             SetCableFromSnap(ChannelId.Media, snap, ref _mediaCableId, nameof(MediaCableId));
@@ -513,6 +632,15 @@ public sealed class MainViewModel : ObservableObject
             {
                 var channel = Channels.First(item => item.Id == channelSnap.Id);
                 channel.Apply(channelSnap);
+                if (outputsRebuilt) channel.ReselectDevice();
+            }
+
+            if (cablesRebuilt)
+            {
+                Raise(nameof(GameCableId));
+                Raise(nameof(ChatCableId));
+                Raise(nameof(MediaCableId));
+                Raise(nameof(AuxCableId));
             }
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -560,6 +688,7 @@ public sealed class MainViewModel : ObservableObject
 
     public void ApplyPeaks(PeakUpdate peaks)
     {
+        ApplyOutputMeter(peaks);
         if (Math.Abs(_micPeak - peaks.MicPeak) >= 0.02)
             MicPeak = peaks.MicPeak;
         foreach (var channel in Channels)
@@ -577,7 +706,7 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private void RebuildOutputs(IReadOnlyList<DeviceSnapshot> devices, IEnumerable<string?> selectedIds, bool virtualMix)
+    private bool RebuildOutputs(IReadOnlyList<DeviceSnapshot> devices, IEnumerable<string?> selectedIds, bool virtualMix)
     {
         var items = new List<DeviceOption> { new() { Id = "", Name = virtualMix ? "Master mix" : "Default" } };
         foreach (var device in devices)
@@ -587,25 +716,27 @@ public sealed class MainViewModel : ObservableObject
             if (items.All(item => !string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase)))
                 items.Add(new DeviceOption { Id = id!, Name = "Disconnected device" });
         }
-        Replace(OutputChoices, items);
+        return Replace(OutputChoices, items);
     }
 
-    private void RebuildInputs(IReadOnlyList<DeviceSnapshot> devices)
+    private bool RebuildInputs(IReadOnlyList<DeviceSnapshot> devices)
     {
         var items = devices.Select(device => new DeviceOption { Id = device.Id, Name = device.Name }).ToList();
-        Replace(InputDevices, items);
+        return Replace(InputDevices, items);
     }
 
-    private static void Replace(ObservableCollection<DeviceOption> target, List<DeviceOption> items)
+    /// <summary>Returns true when the list was refilled.</summary>
+    private static bool Replace(ObservableCollection<DeviceOption> target, List<DeviceOption> items)
     {
         if (target.Count == items.Count &&
             target.Zip(items).All(pair =>
                 string.Equals(pair.First.Id, pair.Second.Id, StringComparison.OrdinalIgnoreCase) &&
                 pair.First.Name == pair.Second.Name))
-            return;
+            return false;
         target.Clear();
         foreach (var item in items)
             target.Add(item);
+        return true;
     }
 
     private void SetCable(ChannelId channel, ref string field, string? value)

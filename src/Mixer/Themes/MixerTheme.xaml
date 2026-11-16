@@ -2,18 +2,25 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:conv="clr-namespace:Mixer.Converters">
   <conv:BoolToVisibilityConverter x:Key="BoolVis"/>
-  <FontFamily x:Key="InterFont">pack://application:,,,/Assets/Fonts/#Inter</FontFamily>
+  <!-- Labels are monospace and numerals are condensed, like silkscreen on a hardware panel. Both ship with Windows. -->
+  <FontFamily x:Key="InterFont">Cascadia Mono, Consolas, Courier New</FontFamily>
+  <FontFamily x:Key="LabelFont">Cascadia Mono, Consolas, Courier New</FontFamily>
+  <FontFamily x:Key="DisplayFont">Bahnschrift</FontFamily>
+  <SolidColorBrush x:Key="PaperBrush" Color="#E8E3D6"/>
+  <SolidColorBrush x:Key="RuleBrush" Color="#A8A190"/>
+  <SolidColorBrush x:Key="ScreenBrush" Color="#0C0C0A"/>
+  <SolidColorBrush x:Key="OnInkBrush" Color="#EFEBDD"/>
 
-  <SolidColorBrush x:Key="BgBrush" Color="#0D0F12"/>
-  <SolidColorBrush x:Key="CardBrush" Color="#14181F"/>
-  <SolidColorBrush x:Key="ElevatedBrush" Color="#1C222C"/>
-  <SolidColorBrush x:Key="LineBrush" Color="#2A3140"/>
-  <SolidColorBrush x:Key="TextBrush" Color="#F2F4F6"/>
-  <SolidColorBrush x:Key="MutedBrush" Color="#8D96A5"/>
-  <SolidColorBrush x:Key="FaintBrush" Color="#5C6573"/>
-  <SolidColorBrush x:Key="AccentBrush" Color="#B6F23A"/>
-  <SolidColorBrush x:Key="InkBrush" Color="#14180A"/>
-  <SolidColorBrush x:Key="DangerBrush" Color="#FF8B9A"/>
+  <SolidColorBrush x:Key="BgBrush" Color="#E8E3D6"/>
+  <SolidColorBrush x:Key="CardBrush" Color="#E8E3D6"/>
+  <SolidColorBrush x:Key="ElevatedBrush" Color="#DDD7C8"/>
+  <SolidColorBrush x:Key="LineBrush" Color="#1B1A17"/>
+  <SolidColorBrush x:Key="TextBrush" Color="#1B1A17"/>
+  <SolidColorBrush x:Key="MutedBrush" Color="#5A564D"/>
+  <SolidColorBrush x:Key="FaintBrush" Color="#5A564D"/>
+  <SolidColorBrush x:Key="AccentBrush" Color="#F0501E"/>
+  <SolidColorBrush x:Key="InkBrush" Color="#1B1A17"/>
+  <SolidColorBrush x:Key="DangerBrush" Color="#B5360C"/>
 
   <Style x:Key="ScrollRepeat" TargetType="RepeatButton">
     <Setter Property="OverridesDefaultStyle" Value="True"/>
@@ -33,7 +40,7 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Thumb">
-          <Border Background="#3A4250" CornerRadius="3" Margin="2"/>
+          <Border Background="#1B1A17" CornerRadius="1" Margin="2"/>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -86,7 +93,7 @@
   </Style>
 
   <Style TargetType="ToolTip">
-    <Setter Property="Background" Value="{StaticResource ElevatedBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
     <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
     <Setter Property="BorderThickness" Value="1"/>
@@ -96,7 +103,7 @@
   </Style>
 
   <Style x:Key="GhostButton" TargetType="Button">
-    <Setter Property="Background" Value="{StaticResource ElevatedBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
     <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
     <Setter Property="BorderThickness" Value="1"/>
@@ -107,7 +114,7 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="2" Padding="{TemplateBinding Padding}">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
@@ -115,7 +122,8 @@
               <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#243014"/>
+              <Setter Property="Foreground" Value="{StaticResource PaperBrush}"/>
+              <Setter TargetName="Bd" Property="Background" Value="#1B1A17"/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -128,9 +136,9 @@
     <Setter Property="Margin" Value="0,8,0,0"/>
     <Style.Triggers>
       <DataTrigger Binding="{Binding Muted}" Value="True">
-        <Setter Property="Background" Value="#3A1820"/>
-        <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
-        <Setter Property="BorderBrush" Value="#FF6B81"/>
+        <Setter Property="Background" Value="#1B1A17"/>
+        <Setter Property="Foreground" Value="{StaticResource PaperBrush}"/>
+        <Setter Property="BorderBrush" Value="#1B1A17"/>
       </DataTrigger>
     </Style.Triggers>
   </Style>
@@ -139,9 +147,9 @@
     <Setter Property="MinWidth" Value="72"/>
     <Style.Triggers>
       <DataTrigger Binding="{Binding MicMuted}" Value="True">
-        <Setter Property="Background" Value="#3A1820"/>
-        <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
-        <Setter Property="BorderBrush" Value="#FF6B81"/>
+        <Setter Property="Background" Value="#1B1A17"/>
+        <Setter Property="Foreground" Value="{StaticResource PaperBrush}"/>
+        <Setter Property="BorderBrush" Value="#1B1A17"/>
       </DataTrigger>
     </Style.Triggers>
   </Style>
@@ -157,12 +165,12 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="2">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#1C222C"/>
+              <Setter TargetName="Bd" Property="Background" Value="#DDD7C8"/>
               <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             </Trigger>
           </ControlTemplate.Triggers>
@@ -174,8 +182,8 @@
   <Style x:Key="CloseButton" TargetType="Button" BasedOn="{StaticResource ChromeButton}">
     <Style.Triggers>
       <Trigger Property="IsMouseOver" Value="True">
-        <Setter Property="Background" Value="#3A1820"/>
-        <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
+        <Setter Property="Background" Value="#1B1A17"/>
+        <Setter Property="Foreground" Value="{StaticResource PaperBrush}"/>
       </Trigger>
     </Style.Triggers>
   </Style>
@@ -188,13 +196,13 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ComboBoxItem">
-          <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="6">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="1">
             <ContentPresenter/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsHighlighted" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#243014"/>
-              <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+              <Setter TargetName="Bd" Property="Background" Value="#1B1A17"/>
+              <Setter Property="Foreground" Value="{StaticResource PaperBrush}"/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -204,19 +212,20 @@
 
   <Style TargetType="ComboBox">
     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-    <Setter Property="Background" Value="{StaticResource ElevatedBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
     <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="FontFamily" Value="{StaticResource InterFont}"/>
     <Setter Property="FontSize" Value="12"/>
     <Setter Property="Padding" Value="10,6"/>
+    <Setter Property="MinHeight" Value="26"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
     <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
     <Setter Property="IsSynchronizedWithCurrentItem" Value="False"/>
     <Setter Property="ItemTemplate">
       <Setter.Value>
         <DataTemplate>
-          <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ComboBoxItem}}"/>
+          <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ComboBoxItem}}"/>
         </DataTemplate>
       </Setter.Value>
     </Setter>
@@ -231,8 +240,8 @@
                           BorderThickness="1">
               <ToggleButton.Template>
                 <ControlTemplate TargetType="ToggleButton">
-                  <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8">
-                    <Path Width="8" Height="5" HorizontalAlignment="Right" Margin="0,0,10,0" Data="M0,0 L4,4 L8,0" Stroke="#8D96A5" StrokeThickness="1.4" Stretch="Fill"/>
+                  <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="2">
+                    <Path Width="8" Height="5" HorizontalAlignment="Right" Margin="0,0,10,0" Data="M0,0 L4,4 L8,0" Stroke="#5A564D" StrokeThickness="1.4" Stretch="Fill"/>
                   </Border>
                   <ControlTemplate.Triggers>
                     <Trigger Property="IsMouseOver" Value="True">
@@ -246,12 +255,12 @@
               </ToggleButton.Template>
             </ToggleButton>
             <TextBlock Margin="10,0,28,0" VerticalAlignment="Center" IsHitTestVisible="False"
-                       Text="{Binding SelectedItem.Name, RelativeSource={RelativeSource TemplatedParent}}"
+                       Text="{Binding SelectionBoxItem, RelativeSource={RelativeSource TemplatedParent}}"
                        TextTrimming="CharacterEllipsis" Foreground="{TemplateBinding Foreground}"/>
             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False"
                    IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade">
               <Border Margin="0,4,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
-                      MaxHeight="320" Background="#14181F" BorderBrush="#2A3140" BorderThickness="1" CornerRadius="8" Padding="4">
+                      MaxHeight="320" Background="#E8E3D6" BorderBrush="#1B1A17" BorderThickness="1" CornerRadius="2" Padding="4">
                 <ScrollViewer MaxHeight="300">
                   <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
                 </ScrollViewer>
@@ -297,7 +306,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="Slider">
           <Grid VerticalAlignment="Center" Height="22">
-            <Border Height="4" VerticalAlignment="Center" CornerRadius="2" Background="#2A3140"/>
+            <Border Height="4" VerticalAlignment="Center" CornerRadius="2" Background="#1B1A17"/>
             <Track x:Name="PART_Track">
               <Track.DecreaseRepeatButton>
                 <RepeatButton Style="{StaticResource BalanceRepeat}" Command="Slider.DecreaseLarge"/>
@@ -309,7 +318,7 @@
                 <Thumb Width="14" Height="22" Focusable="False" OverridesDefaultStyle="True">
                   <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                      <Border Background="#B6F23A" CornerRadius="4" Width="14" Height="22"/>
+                      <Border Background="#F0501E" CornerRadius="4" Width="14" Height="22"/>
                     </ControlTemplate>
                   </Thumb.Template>
                 </Thumb>
