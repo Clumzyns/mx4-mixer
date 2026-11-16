@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\mixer.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>AudioMixer</AssemblyName>
+    <RootNamespace>Mixer</RootNamespace>
+    <Product>Mixer</Product>
+    <AssemblyTitle>Mixer</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Company>Mixer</Company>
+    <Description>Per-app volume mixer</Description>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <Resource Include="Assets\mixer.ico" />
+  </ItemGroup>
+</Project>
