@@ -24,7 +24,7 @@ public sealed class TrayService : IDisposable
         (_icon, _iconStream) = LoadIcon();
 
         var open = new Forms.ToolStripMenuItem("Open Mixer");
-        open.Font = new Font(open.Font, FontStyle.Bold);
+        open.Font = new Font(open.Font, System.Drawing.FontStyle.Bold);
         open.Click += (_, _) => _window.ShowFromTray();
 
         var startWithWindows = new Forms.ToolStripMenuItem("Start with Windows");

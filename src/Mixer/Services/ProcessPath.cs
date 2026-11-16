@@ -54,7 +54,7 @@ public static class ProcessPath
         try
         {
             var description = FileVersionInfo.GetVersionInfo(path).FileDescription;
-            if (!string.IsNullOrWhiteSpace(description) && description.Length <= 42 && description.IndexOfAny('\\', '/', '%', '@') < 0)
+            if (!string.IsNullOrWhiteSpace(description) && description.Length <= 42 && description.IndexOfAny(new[] { '\\', '/', '%', '@' }) < 0)
                 return description.Trim();
         }
         catch

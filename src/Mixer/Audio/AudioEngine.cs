@@ -302,7 +302,7 @@ public sealed class AudioEngine : IDisposable
 
                     try
                     {
-                        if (session.State == AudioSessionState.Expired) continue;
+                        if (session.State == AudioSessionState.AudioSessionStateExpired) continue;
                     }
                     catch { continue; }
 
