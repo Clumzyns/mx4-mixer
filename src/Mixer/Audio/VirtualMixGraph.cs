@@ -248,7 +248,7 @@ internal sealed class VirtualMixGraph : IDisposable, IWaveProvider
         public FloatRing Ring { get; }
         public WasapiCapture? Capture { get; set; }
         public float Peak { get; private set; }
-        public float Gain => _live.Audible(Channel);
+        public float Gain => _live.MixGain(Channel);
 
         public void Write(byte[] buffer, int bytes, WaveFormat format)
         {

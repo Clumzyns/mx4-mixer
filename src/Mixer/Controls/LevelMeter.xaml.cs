@@ -41,21 +41,19 @@ public partial class LevelMeter : UserControl
 
     private void Update()
     {
-        if (Fill == null || Track == null) return;
+        if (Fill == null || Track == null || FillScale == null) return;
         var amount = Math.Clamp(Value, 0d, 1d);
         if (Orientation == Orientation.Horizontal)
         {
-            Fill.VerticalAlignment = VerticalAlignment.Stretch;
-            Fill.HorizontalAlignment = HorizontalAlignment.Left;
-            Fill.Width = Math.Max(0, Track.ActualWidth * amount);
-            Fill.Height = double.NaN;
+            Fill.RenderTransformOrigin = new Point(0, 0.5);
+            FillScale.ScaleX = amount;
+            FillScale.ScaleY = 1;
         }
         else
         {
-            Fill.HorizontalAlignment = HorizontalAlignment.Stretch;
-            Fill.VerticalAlignment = VerticalAlignment.Bottom;
-            Fill.Height = Math.Max(0, Track.ActualHeight * amount);
-            Fill.Width = double.NaN;
+            Fill.RenderTransformOrigin = new Point(0.5, 1);
+            FillScale.ScaleX = 1;
+            FillScale.ScaleY = amount;
         }
     }
 }

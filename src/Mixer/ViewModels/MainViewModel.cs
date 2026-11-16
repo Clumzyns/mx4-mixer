@@ -21,6 +21,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _routingAvailable;
     private bool _startWithWindows;
     private bool _startMinimized;
+    private bool _closeToTray = true;
     private bool _settingsOpen;
     private bool _chatMixEnabled;
     private bool _chatMixConnected;
@@ -50,6 +51,7 @@ public sealed class MainViewModel : ObservableObject
         _chatMix = chatMix;
         _startWithWindows = config.StartWithWindows;
         _startMinimized = config.StartMinimized;
+        _closeToTray = config.CloseToTray;
         _chatMixEnabled = config.ChatMixEnabled;
         _chatMixBalance = Math.Clamp(config.ChatMixBalance, 0, 100);
         _masterVolume = ChatMixMath.Percent(config.MasterVolume);
@@ -68,7 +70,12 @@ public sealed class MainViewModel : ObservableObject
         OpenVacDownloadCommand = new RelayCommand(OpenVacDownload);
         RenameCablesCommand = new RelayCommand(RenameCables);
         _engine.StructureChanged += (_, snap) => Apply(snap);
-        _engine.PeaksChanged += (_, peaks) => ApplyPeaks(peaks);
+    }
+
+    public void ConsumePeaks()
+    {
+        if (!_engine.TryConsumePeaks(out var peaks)) return;
+        ApplyPeaks(peaks);
     }
 
     public ObservableCollection<ChannelViewModel> Channels { get; }
@@ -141,6 +148,17 @@ public sealed class MainViewModel : ObservableObject
                 Log.Error("Startup registration failed", ex);
                 Status = "Couldn't update the Windows startup entry.";
             }
+            try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+        }
+    }
+
+    public bool CloseToTray
+    {
+        get => _closeToTray;
+        set
+        {
+            if (!Set(ref _closeToTray, value)) return;
+            _config.CloseToTray = value;
             try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
         }
     }
@@ -244,8 +262,6 @@ public sealed class MainViewModel : ObservableObject
             Raise(nameof(ChatMixReadout));
             _config.ChatMixBalance = balance;
             _engine.ApplyChatMix(game, chat);
-            ShowChannelVolume(ChannelId.Game, game);
-            ShowChannelVolume(ChannelId.Chat, chat);
         }
     }
 
@@ -351,8 +367,6 @@ public sealed class MainViewModel : ObservableObject
         if (_config.ChatMixBalance != balance)
             _config.ChatMixBalance = balance;
         _engine.ApplyChatMix(game, chat);
-        ShowChannelVolume(ChannelId.Game, game);
-        ShowChannelVolume(ChannelId.Chat, chat);
     }
 
     private void ApplyKnob(int position)
@@ -361,14 +375,6 @@ public sealed class MainViewModel : ObservableObject
         var percent = _engine.ApplyKnobPosition(position);
         SetMasterPercent(percent);
         ChatMixDetail = $"Volume knob {position}/{Math.Max(1, _config.VolumeKnobMax)} → master {percent}.";
-    }
-
-    private void ShowChannelVolume(ChannelId id, int percent)
-    {
-        var channel = Channels.First(item => item.Id == id);
-        channel.Syncing = true;
-        try { channel.Volume = percent; }
-        finally { channel.Syncing = false; }
     }
 
     private string LastReport
@@ -474,15 +480,22 @@ public sealed class MainViewModel : ObservableObject
             destination.Apps.Add(chip);
     }
 
-    private void ApplyPeaks(PeakUpdate peaks)
+    public void ApplyPeaks(PeakUpdate peaks)
     {
-        MicPeak = peaks.MicPeak;
+        if (Math.Abs(_micPeak - peaks.MicPeak) >= 0.02)
+            MicPeak = peaks.MicPeak;
         foreach (var channel in Channels)
         {
             var index = (int)channel.Id;
-            channel.Peak = index < peaks.ChannelPeaks.Length ? peaks.ChannelPeaks[index] : 0;
+            var next = index < peaks.ChannelPeaks.Length ? peaks.ChannelPeaks[index] : 0;
+            if (Math.Abs(channel.Peak - next) >= 0.02)
+                channel.Peak = next;
             foreach (var app in channel.Apps)
-                app.Peak = peaks.AppPeaks.TryGetValue(app.ExeKey, out var peak) ? peak : 0;
+            {
+                var appPeak = peaks.AppPeaks.TryGetValue(app.ExeKey, out var peak) ? peak : 0;
+                if (Math.Abs(app.Peak - appPeak) >= 0.02)
+                    app.Peak = appPeak;
+            }
         }
     }
 

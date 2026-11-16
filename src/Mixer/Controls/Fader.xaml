@@ -22,7 +22,11 @@
   <Grid>
     <Grid x:Name="VerticalLayout">
       <Border x:Name="VGroove" Width="4" HorizontalAlignment="Center" CornerRadius="2" Background="#2A3140"/>
-      <Border x:Name="VFill" Width="4" HorizontalAlignment="Center" VerticalAlignment="Bottom" CornerRadius="2" Background="#B6F23A" IsHitTestVisible="False"/>
+      <Border x:Name="VFill" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" CornerRadius="2" Background="#B6F23A" IsHitTestVisible="False" RenderTransformOrigin="0.5,1">
+        <Border.RenderTransform>
+          <ScaleTransform x:Name="VScale" ScaleY="1"/>
+        </Border.RenderTransform>
+      </Border>
       <!-- False keeps 0 at the bottom and 100 at the top. Value is the real percent; drag up raises it. -->
       <Slider x:Name="VSlider" Orientation="Vertical" Minimum="0" Maximum="100" SmallChange="1" LargeChange="5"
               IsDirectionReversed="False" IsMoveToPointEnabled="True"
@@ -52,7 +56,11 @@
     </Grid>
     <Grid x:Name="HorizontalLayout" Visibility="Collapsed" Height="18">
       <Border x:Name="HGroove" Height="4" VerticalAlignment="Center" CornerRadius="2" Background="#2A3140"/>
-      <Border x:Name="HFill" Height="4" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="2" Background="#B6F23A" IsHitTestVisible="False"/>
+      <Border x:Name="HFill" Height="4" HorizontalAlignment="Stretch" VerticalAlignment="Center" CornerRadius="2" Background="#B6F23A" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
+        <Border.RenderTransform>
+          <ScaleTransform x:Name="HScale" ScaleX="1"/>
+        </Border.RenderTransform>
+      </Border>
       <Slider x:Name="HSlider" Orientation="Horizontal" Minimum="0" Maximum="100" SmallChange="1" LargeChange="5"
               IsMoveToPointEnabled="True"
               Value="{Binding Value, ElementName=Root, Mode=TwoWay}">

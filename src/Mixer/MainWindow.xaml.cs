@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     {
         DataContext = viewModel;
         InitializeComponent();
+        CompositionTarget.Rendering += OnMeterFrame;
         SourceInitialized += (_, _) =>
         {
             var handle = new WindowInteropHelper(this).Handle;
@@ -30,6 +31,17 @@ public partial class MainWindow : Window
             TrySetBorderColor(handle);
             ApplyMaximizedPadding();
         };
+    }
+
+    private TimeSpan _lastMeterFrame = TimeSpan.MinValue;
+
+    private void OnMeterFrame(object? sender, EventArgs e)
+    {
+        if (e is not RenderingEventArgs args) return;
+        if (args.RenderingTime - _lastMeterFrame < TimeSpan.FromMilliseconds(32)) return;
+        _lastMeterFrame = args.RenderingTime;
+        if (DataContext is MainViewModel viewModel)
+            viewModel.ConsumePeaks();
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -55,7 +67,7 @@ public partial class MainWindow : Window
         if (!App.IsExiting)
         {
             e.Cancel = true;
-            HideToTray();
+            CloseOrHide();
             return;
         }
         base.OnClosing(e);
@@ -111,11 +123,22 @@ public partial class MainWindow : Window
             viewModel.SettingsOpen = !viewModel.SettingsOpen;
     }
 
+    private void CloseOrHide()
+    {
+        if (DataContext is MainViewModel viewModel && !viewModel.CloseToTray)
+        {
+            if (Application.Current is App app)
+                app.ExitApplication();
+            return;
+        }
+        HideToTray();
+    }
+
     private void Minimize_Click(object sender, RoutedEventArgs e) => HideToTray();
 
     private void Maximize_Click(object sender, RoutedEventArgs e) => ToggleMaximize();
 
-    private void Close_Click(object sender, RoutedEventArgs e) => HideToTray();
+    private void Close_Click(object sender, RoutedEventArgs e) => CloseOrHide();
 
     private void SettingsBackdrop_MouseDown(object sender, MouseButtonEventArgs e)
     {

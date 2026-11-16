@@ -65,7 +65,10 @@ public partial class App : System.Windows.Application
             _tray = new TrayService(_window, _viewModel, ExitApplication);
             _chatMix.Start();
             _engine.Start();
-            if (_config.StartMinimized)
+            try { Autostart.Set(_config.StartWithWindows); }
+            catch (Exception ex) { Log.Error("Startup registration failed", ex); }
+            var tray = e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase));
+            if (tray || _config.StartMinimized)
             {
                 _window.ShowInTaskbar = false;
                 _tray.NotifyHidden();

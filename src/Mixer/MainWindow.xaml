@@ -331,6 +331,8 @@
           <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource FaintBrush}" Margin="0,4,0,16"/>
           <CheckBox Content="Start with Windows" IsChecked="{Binding StartWithWindows}"/>
           <CheckBox Content="Start minimized to the tray" IsChecked="{Binding StartMinimized}"/>
+          <CheckBox Content="Close to tray" IsChecked="{Binding CloseToTray}"
+                    ToolTip="The close button hides Mixer. Mixing keeps running. Quit from the tray icon to exit."/>
           <CheckBox Content="Invert knob" IsChecked="{Binding InvertVolumeKnob}"
                     ToolTip="By default knob position 0 is full volume and 56 is silent. Turn this on to swap that."/>
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0"

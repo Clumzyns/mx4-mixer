@@ -23,31 +23,23 @@ public sealed class TrayService : IDisposable
         _exit = exit;
         (_icon, _iconStream) = LoadIcon();
 
-        var open = new Forms.ToolStripMenuItem("Open Mixer");
+        var open = new Forms.ToolStripMenuItem("Open");
         open.Font = new Font(open.Font, System.Drawing.FontStyle.Bold);
         open.Click += (_, _) => _window.ShowFromTray();
 
         var startWithWindows = new Forms.ToolStripMenuItem("Start with Windows");
         startWithWindows.Click += (_, _) => _viewModel.StartWithWindows = !_viewModel.StartWithWindows;
 
-        var startMinimized = new Forms.ToolStripMenuItem("Start minimized");
-        startMinimized.Click += (_, _) => _viewModel.StartMinimized = !_viewModel.StartMinimized;
-
-        var exitItem = new Forms.ToolStripMenuItem("Exit");
-        exitItem.Click += (_, _) => _exit();
+        var quit = new Forms.ToolStripMenuItem("Quit");
+        quit.Click += (_, _) => _exit();
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(open);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(startWithWindows);
-        menu.Items.Add(startMinimized);
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(exitItem);
-        menu.Opening += (_, _) =>
-        {
-            startWithWindows.Checked = _viewModel.StartWithWindows;
-            startMinimized.Checked = _viewModel.StartMinimized;
-        };
+        menu.Items.Add(quit);
+        menu.Opening += (_, _) => startWithWindows.Checked = _viewModel.StartWithWindows;
 
         _notify = new Forms.NotifyIcon
         {
@@ -55,6 +47,11 @@ public sealed class TrayService : IDisposable
             Icon = _icon,
             Visible = true,
             ContextMenuStrip = menu
+        };
+        _notify.MouseClick += (_, e) =>
+        {
+            if (e.Button == Forms.MouseButtons.Left)
+                _window.ShowFromTray();
         };
         _notify.DoubleClick += (_, _) => _window.ShowFromTray();
         _window.HiddenToTray += (_, _) => NotifyHidden();

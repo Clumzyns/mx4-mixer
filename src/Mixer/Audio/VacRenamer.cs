@@ -6,7 +6,7 @@ namespace Mixer.Audio;
 
 internal static class VacRenamer
 {
-    private static readonly (ChannelId Channel, string Name)[] Names =
+    public static readonly (ChannelId Channel, string Name)[] Names =
     [
         (ChannelId.Game, "Mixer - Game"),
         (ChannelId.Chat, "Mixer - Chat"),
@@ -20,12 +20,12 @@ internal static class VacRenamer
         using var enumerator = new MMDeviceEnumerator();
         var render = List(enumerator, DataFlow.Render);
         var capture = List(enumerator, DataFlow.Capture);
-        var cables = VacCables.Discover(render, capture);
+        var cables = VacCables.Discover(render, capture, config.CableCaptures);
         var renamed = 0;
         foreach (var (channel, name) in Names)
         {
             if (!config.CableAssignments.TryGetValue(channel.Key(), out var renderId)) continue;
-            var cable = cables.FirstOrDefault(item => string.Equals(item.RenderId, renderId, StringComparison.OrdinalIgnoreCase));
+            var cable = cables.FirstOrDefault(item => string.Equals(EndpointIds.Key(item.RenderId), EndpointIds.Key(renderId), StringComparison.OrdinalIgnoreCase));
             if (cable == null) continue;
             EndpointRenamer.SetFriendlyName(cable.RenderId, name);
             renamed++;
@@ -35,10 +35,21 @@ internal static class VacRenamer
                 renamed++;
             }
             config.CableAssignments[channel.Key()] = cable.RenderId;
+            if (!string.IsNullOrWhiteSpace(cable.CaptureId))
+                config.CableCaptures[channel.Key()] = cable.CaptureId;
         }
 
+        config.CableNamesApplied = true;
         ConfigStore.Save(config);
         return renamed;
+    }
+
+    public static bool Matches(string? friendlyName, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(friendlyName)) return false;
+        var label = VacCables.LabelOf(friendlyName);
+        return label.Equals(expected, StringComparison.OrdinalIgnoreCase)
+            || friendlyName.Trim().StartsWith(expected, StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<(string Id, string Name)> List(MMDeviceEnumerator enumerator, DataFlow flow)

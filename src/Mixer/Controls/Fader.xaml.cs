@@ -57,16 +57,16 @@ public partial class Fader : UserControl
 
     private void UpdateFill()
     {
-        if (VFill == null || HFill == null) return;
+        if (VFill == null || HFill == null || VScale == null || HScale == null) return;
         var horizontal = Orientation == Orientation.Horizontal;
         VerticalLayout.Visibility = horizontal ? Visibility.Collapsed : Visibility.Visible;
         HorizontalLayout.Visibility = horizontal ? Visibility.Visible : Visibility.Collapsed;
         var brush = IsMuted ? MutedBrush : Accent;
         var amount = Math.Clamp(Value / 100d, 0d, 1d);
-        VFill.Background = brush;
-        HFill.Background = brush;
-        VFill.Height = Math.Max(0, VGroove.ActualHeight * amount);
-        HFill.Width = Math.Max(0, HGroove.ActualWidth * amount);
+        if (!ReferenceEquals(VFill.Background, brush)) VFill.Background = brush;
+        if (!ReferenceEquals(HFill.Background, brush)) HFill.Background = brush;
+        VScale.ScaleY = amount;
+        HScale.ScaleX = amount;
     }
 
     private static SolidColorBrush Freeze(string hex)

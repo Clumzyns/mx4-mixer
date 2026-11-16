@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using Mixer.Audio.Com;
@@ -21,8 +22,10 @@ public sealed class AudioEngine : IDisposable
     private readonly Dictionary<uint, string> _routed = new();
     private readonly Dictionary<string, float> _appShown = new(StringComparer.OrdinalIgnoreCase);
     private readonly float[] _channelShown = new float[5];
-    private readonly DispatcherTimer _meterTimer;
+    private readonly Thread _meterThread;
     private readonly DispatcherTimer _scanTimer;
+    private PeakUpdate? _pendingPeaks;
+    private int _peaksDirty;
     private readonly DispatcherTimer _saveTimer;
     private AppEndpointRouter? _router;
     private List<LiveSession> _live = [];
@@ -45,6 +48,7 @@ public sealed class AudioEngine : IDisposable
     private string _sonarWarning = "";
     private string _backendName = "";
     private readonly LiveMix _gains = new();
+    private readonly CableVolume _cableVolume;
     private int _gainQueuedFlag;
     private int _saveQueued;
 
@@ -52,9 +56,10 @@ public sealed class AudioEngine : IDisposable
     {
         _config = config;
         _dispatcher = System.Windows.Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        _cableVolume = new CableVolume(_dispatcher, ApplyEndpointVolume);
         _enumerator = new MMDeviceEnumerator();
         _notifications = new DeviceNotifications(this);
-        _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Background, (_, _) => TickMeters(), _dispatcher);
+        _meterThread = new Thread(MeterLoop) { IsBackground = true, Name = "Mixer.Meters" };
         _scanTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(800), DispatcherPriority.Background, (_, _) => Scan(), _dispatcher);
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _gains.Load(config);
@@ -68,7 +73,6 @@ public sealed class AudioEngine : IDisposable
     }
 
     public event EventHandler<MixerSnapshot>? StructureChanged;
-    public event EventHandler<PeakUpdate>? PeaksChanged;
 
     public void Start()
     {
@@ -90,8 +94,20 @@ public sealed class AudioEngine : IDisposable
         RefreshDevices();
         TryRestoreMasters();
         Scan();
-        _meterTimer.Start();
+        _meterThread.Start();
         _scanTimer.Start();
+    }
+
+    public bool TryConsumePeaks(out PeakUpdate peaks)
+    {
+        var pending = _pendingPeaks;
+        if (Interlocked.Exchange(ref _peaksDirty, 0) == 0 || pending == null)
+        {
+            peaks = new PeakUpdate();
+            return false;
+        }
+        peaks = pending;
+        return true;
     }
 
     public void RequestScan()
@@ -132,7 +148,7 @@ public sealed class AudioEngine : IDisposable
         _gains.SetMaster(next);
         if (Math.Abs(_config.MasterVolume - next) <= 0.0005f) return;
         _config.MasterVolume = next;
-        QueueGain();
+        if (!_virtualMixActive) QueueGain();
         ScheduleSave();
     }
 
@@ -161,9 +177,10 @@ public sealed class AudioEngine : IDisposable
     public void SetChannelVolume(ChannelId id, float volume)
     {
         var next = VolumeMath.Clamp(volume);
-        _gains.SetChannel(id, next);
+        _gains.SetFader(id, next);
         _config.Channel(id).Volume = next;
-        QueueGain();
+        _gains.SetSoftwareFader(id, !_cableVolume.TrySetVolume(id, next));
+        if (!_virtualMixActive) QueueGain();
         ScheduleSave();
     }
 
@@ -172,23 +189,20 @@ public sealed class AudioEngine : IDisposable
     /// </summary>
     public void ApplyChatMix(int game, int chat)
     {
-        var gameVolume = VolumeMath.Clamp(game / 100f);
-        var chatVolume = VolumeMath.Clamp(chat / 100f);
-        _gains.SetChannel(ChannelId.Game, gameVolume);
-        _gains.SetChannel(ChannelId.Chat, chatVolume);
-        _config.Channel(ChannelId.Game).Volume = gameVolume;
-        _config.Channel(ChannelId.Chat).Volume = chatVolume;
-        QueueGain();
-        ScheduleSave();
+        _gains.SetChatMix(ChannelId.Game, VolumeMath.Clamp(game / 100f));
+        _gains.SetChatMix(ChannelId.Chat, VolumeMath.Clamp(chat / 100f));
+        _gains.SetChatMix(ChannelId.Media, 1f);
+        _gains.SetChatMix(ChannelId.Aux, 1f);
+        _gains.SetChatMix(ChannelId.System, 1f);
     }
 
     public void SetChannelMuted(ChannelId id, bool muted)
     {
         _gains.SetMuted(id, muted);
         _config.Channel(id).Muted = muted;
-        QueueGain();
+        _gains.SetSoftwareMute(id, !_cableVolume.TrySetMute(id, muted));
+        if (!_virtualMixActive) QueueGain();
         ScheduleSave();
-        Notify();
     }
 
     public void SetChannelDevice(ChannelId id, string? deviceId)
@@ -253,10 +267,11 @@ public sealed class AudioEngine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _meterTimer.Stop();
         _scanTimer.Stop();
         _saveTimer.Stop();
         StopMix();
+        try { _cableVolume.Dispose(); } catch { /* already stopped */ }
+        try { if (_meterThread.IsAlive) _meterThread.Join(400); } catch { /* background */ }
         try { ConfigStore.Save(_config); } catch { /* exit path */ }
         try { _enumerator.UnregisterEndpointNotificationCallback(_notifications); } catch { /* already gone */ }
         DisposeDevices(_render);
@@ -459,8 +474,8 @@ public sealed class AudioEngine : IDisposable
             }
 
             var throughMix = _virtualMixActive && _virtualInputs.ContainsKey(channel);
-            var channelScale = _virtualMixActive ? 1f : _gains.Channel(channel);
-            var scale = throughMix ? channelScale : channelScale * _gains.Master;
+            var factor = _gains.MixGain(channel);
+            var scale = throughMix ? 1f : factor * _gains.Master;
             var external = memory.HasWritten && Math.Abs(current - memory.LastVolume) > 0.02f;
             if (external && scale > 0.001f)
             {
@@ -541,19 +556,32 @@ public sealed class AudioEngine : IDisposable
         return ChannelId.System;
     }
 
-    private void TickMeters()
+    private void MeterLoop()
+    {
+        while (!_disposed)
+        {
+            try { PublishPeaks(); }
+            catch (Exception ex) { Log.Error("Peak meter failed", ex); }
+            Thread.Sleep(33);
+        }
+    }
+
+    private void PublishPeaks()
     {
         if (_disposed) return;
         float micRaw = 0;
-        if (!_micMuted && _masterInputId != null && _capture.TryGetValue(_masterInputId, out var mic))
+        var micMuted = _micMuted;
+        var micId = _masterInputId;
+        if (!micMuted && micId != null && _capture.TryGetValue(micId, out var mic))
         {
             try { micRaw = mic.AudioMeterInformation.MasterPeakValue; }
             catch { micRaw = 0; }
         }
         _micShown = Decay(_micShown, micRaw);
 
+        var sessions = _live;
         var raw = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
-        foreach (var session in _live)
+        foreach (var session in sessions)
         {
             float peak = 0;
             try { peak = session.Control.AudioMeterInformation?.MasterPeakValue ?? 0; }
@@ -585,16 +613,32 @@ public sealed class AudioEngine : IDisposable
         }
         for (var i = 0; i < _channelShown.Length; i++)
         {
-            if (_config.Channel((ChannelId)i).Muted)
+            if (_gains.Muted((ChannelId)i) && _gains.MixGain((ChannelId)i) <= 0f)
                 _channelShown[i] = 0;
         }
 
-        PeaksChanged?.Invoke(this, new PeakUpdate
+        _pendingPeaks = new PeakUpdate
         {
             MicPeak = _micShown,
             ChannelPeaks = (float[])_channelShown.Clone(),
             AppPeaks = new Dictionary<string, float>(_appShown, StringComparer.OrdinalIgnoreCase)
-        });
+        };
+        Volatile.Write(ref _peaksDirty, 1);
+    }
+
+    private void ApplyEndpointVolume(ChannelId id, float volume, bool muted)
+    {
+        var next = VolumeMath.Clamp(volume);
+        var settings = _config.Channel(id);
+        var volumeChanged = Math.Abs(settings.Volume - next) > 0.01f;
+        var muteChanged = settings.Muted != muted;
+        if (!volumeChanged && !muteChanged) return;
+        settings.Volume = next;
+        settings.Muted = muted;
+        _gains.SetFader(id, next);
+        _gains.SetMuted(id, muted);
+        ScheduleSave();
+        Notify();
     }
 
     private void RefreshDevices()
@@ -658,6 +702,7 @@ public sealed class AudioEngine : IDisposable
 
         foreach (var id in map.Keys.Where(key => !seen.Contains(key)).ToList())
         {
+            _cableVolume.Release(map[id]);
             try { map[id].Dispose(); } catch { /* already dead */ }
             map.Remove(id);
         }
@@ -777,11 +822,21 @@ public sealed class AudioEngine : IDisposable
     private void QueueGain()
     {
         if (Interlocked.Exchange(ref _gainQueuedFlag, 1) == 1) return;
-        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        ThreadPool.QueueUserWorkItem(_ =>
         {
-            Interlocked.Exchange(ref _gainQueuedFlag, 0);
-            if (!_disposed) ApplyGains();
-        }));
+            try
+            {
+                if (!_disposed) ApplyGains();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Session gain failed", ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _gainQueuedFlag, 0);
+            }
+        });
     }
 
     private void ScheduleSave()
@@ -835,7 +890,7 @@ public sealed class AudioEngine : IDisposable
         _backendName = "";
         var render = _render.Values.Select(device => (device.ID, DeviceSnap(device).Name));
         var capture = _capture.Values.Select(device => (device.ID, DeviceSnap(device).Name));
-        _cables = VacCables.Discover(render, capture).ToList();
+        _cables = VacCables.Discover(render, capture, _config.CableCaptures).ToList();
         AssignDefaultCables();
 
         foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
@@ -863,6 +918,110 @@ public sealed class AudioEngine : IDisposable
             if (_virtualInputs.Count > 0)
                 _status = "Mixing VAC lines into the master output.";
         }
+
+        RememberCaptures();
+        SyncCableVolumes();
+        OfferCableRename();
+    }
+
+    private void RememberCaptures()
+    {
+        var changed = false;
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            if (!_virtualCaptures.TryGetValue(channel, out var captureId)) continue;
+            var key = channel.Key();
+            if (_config.CableCaptures.TryGetValue(key, out var saved) && SameDevice(saved, captureId)) continue;
+            _config.CableCaptures[key] = captureId;
+            changed = true;
+        }
+        if (changed) ScheduleSave();
+    }
+
+    private void SyncCableVolumes()
+    {
+        var links = new List<CableVolume.Link>();
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            if (!_virtualInputs.TryGetValue(channel, out var renderId)) continue;
+            if (!TryFindDevice(_render, renderId, out var render)) continue;
+            MMDevice? capture = null;
+            if (_virtualCaptures.TryGetValue(channel, out var captureId))
+                TryFindDevice(_capture, captureId, out capture);
+            var settings = _config.Channel(channel);
+            links.Add(new CableVolume.Link(channel, render, capture, settings.Volume, settings.Muted));
+        }
+        _cableVolume.Sync(links);
+        foreach (var channel in new[] { ChannelId.Game, ChannelId.Chat, ChannelId.Media, ChannelId.Aux })
+        {
+            _gains.SetSoftwareFader(channel, !_cableVolume.HasHardwareVolume(channel));
+            _gains.SetSoftwareMute(channel, !_cableVolume.HasHardwareMute(channel));
+        }
+    }
+
+    private bool TryFindDevice(Dictionary<string, MMDevice> map, string id, out MMDevice device)
+    {
+        if (map.TryGetValue(id, out device!)) return true;
+        foreach (var pair in map)
+        {
+            if (!SameDevice(pair.Key, id)) continue;
+            device = pair.Value;
+            return true;
+        }
+        device = null!;
+        return false;
+    }
+
+    private bool _renameOffered;
+
+    private void OfferCableRename()
+    {
+        if (_renameOffered || _config.CableNamesApplied || _virtualInputs.Count == 0) return;
+        if (!NamesNeedRename())
+        {
+            _config.CableNamesApplied = true;
+            ScheduleSave();
+            return;
+        }
+
+        _renameOffered = true;
+        _config.CableNamesApplied = true;
+        try { ConfigStore.Save(_config); } catch (Exception ex) { Log.Error("Save failed", ex); }
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe)) return;
+            Process.Start(new ProcessStartInfo(exe, "--rename-cables")
+            {
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Cable rename was not started", ex);
+        }
+    }
+
+    private bool NamesNeedRename()
+    {
+        foreach (var (channel, expected) in VacRenamer.Names)
+        {
+            if (!_virtualInputs.TryGetValue(channel, out var renderId)) continue;
+            if (!TryFindDevice(_render, renderId, out var render)) return true;
+            if (!VacRenamer.Matches(Friendly(render), expected)) return true;
+            if (_virtualCaptures.TryGetValue(channel, out var captureId) &&
+                TryFindDevice(_capture, captureId, out var capture) &&
+                !VacRenamer.Matches(Friendly(capture), expected))
+                return true;
+        }
+        return false;
+    }
+
+    private static string Friendly(MMDevice device)
+    {
+        try { return device.FriendlyName; }
+        catch { return device.ID; }
     }
 
     private void AssignDefaultCables()

@@ -6,6 +6,7 @@ internal static class EndpointRenamer
 {
     private static readonly Guid EnumeratorId = new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private static readonly Guid EnumeratorInterface = new("A95664D2-9614-4F35-A746-DE8DB63617E6");
+    private static readonly PropertyKey DeviceDesc = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 2);
     private static readonly PropertyKey FriendlyName = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 14);
 
     public static void SetFriendlyName(string deviceId, string name)
@@ -21,21 +22,24 @@ internal static class EndpointRenamer
             var enumerator = (IMMDeviceEnumerator)Marshal.GetObjectForIUnknown(enumeratorPtr);
             enumerator.GetDevice(deviceId, out var device);
             device.OpenPropertyStore(2, out var store);
-            var key = FriendlyName;
-            var variant = new PropVariant
+            foreach (var key in new[] { DeviceDesc, FriendlyName })
             {
-                vt = 31,
-                pointer = Marshal.StringToCoTaskMemUni(name)
-            };
-            try
-            {
-                store.SetValue(ref key, ref variant);
-                store.Commit();
+                var property = key;
+                var variant = new PropVariant
+                {
+                    vt = 31,
+                    pointer = Marshal.StringToCoTaskMemUni(name)
+                };
+                try
+                {
+                    store.SetValue(ref property, ref variant);
+                }
+                finally
+                {
+                    PropVariantClear(ref variant);
+                }
             }
-            finally
-            {
-                PropVariantClear(ref variant);
-            }
+            store.Commit();
         }
         finally
         {

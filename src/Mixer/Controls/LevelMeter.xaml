@@ -5,6 +5,10 @@
              UseLayoutRounding="True">
   <Grid>
     <Border x:Name="Track" Background="#0A0C0E" CornerRadius="3"/>
-    <Border x:Name="Fill" Background="#B6F23A" CornerRadius="3" HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"/>
+    <Border x:Name="Fill" Background="#B6F23A" CornerRadius="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" IsHitTestVisible="False" RenderTransformOrigin="0,1">
+      <Border.RenderTransform>
+        <ScaleTransform x:Name="FillScale" ScaleX="1" ScaleY="1"/>
+      </Border.RenderTransform>
+    </Border>
   </Grid>
 </UserControl>

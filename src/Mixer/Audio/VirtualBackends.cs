@@ -1,3 +1,5 @@
+using Mixer.Audio.Com;
+
 namespace Mixer.Audio;
 
 /// <summary>
@@ -8,7 +10,8 @@ internal static class VacCables
 {
     public static IReadOnlyList<VacCable> Discover(
         IEnumerable<(string Id, string Name)> render,
-        IEnumerable<(string Id, string Name)> capture)
+        IEnumerable<(string Id, string Name)> capture,
+        IReadOnlyDictionary<string, string>? captureByRender = null)
     {
         var playback = new Dictionary<string, (string Id, string Name, int Order)>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in render)
@@ -36,6 +39,32 @@ internal static class VacCables
                 Label = LabelOf(play.Name),
                 Order = play.Order
             });
+        }
+
+        if (captureByRender != null)
+        {
+            var renderByKey = render.ToDictionary(device => EndpointIds.Key(device.Id), device => device, StringComparer.OrdinalIgnoreCase);
+            var captureByKey = capture.ToDictionary(device => EndpointIds.Key(device.Id), device => device, StringComparer.OrdinalIgnoreCase);
+            foreach (var (renderId, captureId) in captureByRender)
+            {
+                var renderKey = EndpointIds.Key(renderId);
+                if (!renderByKey.TryGetValue(renderKey, out var play)) continue;
+                captureByKey.TryGetValue(EndpointIds.Key(captureId), out var rec);
+                var existing = cables.FirstOrDefault(cable => string.Equals(EndpointIds.Key(cable.RenderId), renderKey, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
+                {
+                    if (rec.Id != null) existing.CaptureId = rec.Id;
+                    continue;
+                }
+                cables.Add(new VacCable
+                {
+                    Key = renderKey,
+                    RenderId = play.Id,
+                    CaptureId = rec.Id,
+                    Label = LabelOf(play.Name),
+                    Order = 1000
+                });
+            }
         }
 
         return cables.OrderBy(cable => cable.Order).ThenBy(cable => cable.Label, StringComparer.OrdinalIgnoreCase).ToList();
@@ -75,7 +104,7 @@ internal sealed class VacCable
 {
     public required string Key { get; init; }
     public required string RenderId { get; init; }
-    public string? CaptureId { get; init; }
+    public string? CaptureId { get; set; }
     public required string Label { get; init; }
     public int Order { get; init; }
 }

@@ -25,7 +25,7 @@ Build on Windows with the [.NET 8 SDK](https://dotnet.microsoft.com/download/dot
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the machine you copy it to does not need the .NET runtime installed. Double-click it. Closing the window leaves it in the tray. Exit from the tray menu.
+That writes `dist\AudioMixer.exe`. It is a self-contained 64-bit app, so the machine you copy it to does not need the .NET runtime installed. Double-click it. Closing the window hides it in the tray and mixing continues. Quit from the tray menu exits. Start with Windows launches it minimized with `--tray`. Launching it again shows the window that is already running.
 
 ## What it does
 

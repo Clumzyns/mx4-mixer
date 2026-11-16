@@ -24,6 +24,6 @@ public static class Autostart
         if (string.IsNullOrWhiteSpace(path))
             throw new InvalidOperationException("Mixer could not find its own executable path.");
 
-        key.SetValue(AppInfo.Name, $"\"{path}\"");
+        key.SetValue(AppInfo.Name, $"\"{path}\" --tray");
     }
 }
